@@ -1,0 +1,185 @@
+import { useSyncExternalStore } from 'react'
+import { buildSeed } from './lib/seed.js'
+import { uid } from './lib/util.js'
+import { nextColor } from './lib/colors.js'
+
+const KEY = 'projectview.state.v1'
+
+function load() {
+  try {
+    const raw = localStorage.getItem(KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      // backfill keys added in later versions
+      if (!parsed.headcount) parsed.headcount = {}
+      if (!parsed.capacity) parsed.capacity = {}
+      if (!parsed.settings) parsed.settings = { hoursPerFTEPerYear: 1600 }
+      return parsed
+    }
+  } catch (e) {
+    console.warn('state load failed', e)
+  }
+  return buildSeed()
+}
+
+let state = load()
+const listeners = new Set()
+
+function persist() {
+  try {
+    localStorage.setItem(KEY, JSON.stringify(state))
+  } catch (e) {
+    console.warn('state persist failed', e)
+  }
+}
+
+function setState(updater) {
+  state = typeof updater === 'function' ? updater(state) : updater
+  persist()
+  listeners.forEach((l) => l())
+}
+
+function subscribe(l) {
+  listeners.add(l)
+  return () => listeners.delete(l)
+}
+
+export function useStore(selector = (s) => s) {
+  return useSyncExternalStore(
+    subscribe,
+    () => selector(state),
+    () => selector(state),
+  )
+}
+
+export function getState() {
+  return state
+}
+
+// ---- actions -------------------------------------------------------------
+
+export const actions = {
+  addProject({ name, client = '', status = 'planned' }) {
+    setState((s) => {
+      const used = s.projects.map((p) => p.color)
+      return {
+        ...s,
+        projects: [
+          ...s.projects,
+          {
+            id: uid('prj'),
+            name: name || 'Neues Projekt',
+            client,
+            status,
+            color: nextColor(used),
+            collapsed: false,
+            subProjects: [],
+          },
+        ],
+      }
+    })
+  },
+
+  updateProject(id, patch) {
+    setState((s) => ({
+      ...s,
+      projects: s.projects.map((p) => (p.id === id ? { ...p, ...patch } : p)),
+    }))
+  },
+
+  removeProject(id) {
+    setState((s) => ({ ...s, projects: s.projects.filter((p) => p.id !== id) }))
+  },
+
+  toggleCollapse(id) {
+    setState((s) => ({
+      ...s,
+      projects: s.projects.map((p) => (p.id === id ? { ...p, collapsed: !p.collapsed } : p)),
+    }))
+  },
+
+  addSubProject(projectId, sub) {
+    setState((s) => ({
+      ...s,
+      projects: s.projects.map((p) =>
+        p.id === projectId
+          ? {
+              ...p,
+              subProjects: [
+                ...p.subProjects,
+                {
+                  id: uid('sub'),
+                  name: sub.name || 'Neues Teilprojekt',
+                  source: sub.source || '',
+                  periods: sub.periods || [],
+                  positions: sub.positions || [],
+                },
+              ],
+            }
+          : p,
+      ),
+    }))
+  },
+
+  updateSubProject(projectId, subId, patch) {
+    setState((s) => ({
+      ...s,
+      projects: s.projects.map((p) =>
+        p.id === projectId
+          ? {
+              ...p,
+              subProjects: p.subProjects.map((sp) => (sp.id === subId ? { ...sp, ...patch } : sp)),
+            }
+          : p,
+      ),
+    }))
+  },
+
+  removeSubProject(projectId, subId) {
+    setState((s) => ({
+      ...s,
+      projects: s.projects.map((p) =>
+        p.id === projectId
+          ? { ...p, subProjects: p.subProjects.filter((sp) => sp.id !== subId) }
+          : p,
+      ),
+    }))
+  },
+
+  setCapacity(workGroup, people) {
+    setState((s) => ({
+      ...s,
+      capacity: { ...s.capacity, [workGroup]: people },
+    }))
+  },
+
+  // Monthly head-count per position: months is a 12-length array (Jan..Dez).
+  setHeadcountMonth(position, monthIdx, value) {
+    setState((s) => {
+      const cur = (s.headcount && s.headcount[position]) || Array(12).fill(0)
+      const next = [...cur]
+      next[monthIdx] = value
+      return { ...s, headcount: { ...s.headcount, [position]: next } }
+    })
+  },
+
+  setHeadcountRow(position, months) {
+    setState((s) => ({ ...s, headcount: { ...s.headcount, [position]: months.slice(0, 12) } }))
+  },
+
+  clearHeadcount(position) {
+    setState((s) => {
+      const next = { ...s.headcount }
+      delete next[position]
+      return { ...s, headcount: next }
+    })
+  },
+
+  setSetting(key, value) {
+    setState((s) => ({ ...s, settings: { ...s.settings, [key]: value } }))
+  },
+
+  resetAll() {
+    setState(buildSeed())
+  },
+}
