@@ -1,5 +1,17 @@
 import raw from './_seeddata.json'
+import standardPositions from './standardPositions.json'
 import { uid } from './util.js'
+
+// Fixed list of Personalkosten positions read from the reference workbooks.
+// This drives the capacity page independently of any Excel upload.
+export const STANDARD_POSITIONS = standardPositions
+
+// Default head-count: every position staffed with a standard 5 people per month.
+export function defaultHeadcount(people = 5) {
+  const hc = {}
+  for (const p of STANDARD_POSITIONS) hc[p.position] = Array(12).fill(people)
+  return hc
+}
 
 // Builds the initial demo state from real VW386 calculation data (HiSi + VoSi)
 // plus a synthetic "planned" program to showcase the hatched rendering.
@@ -51,19 +63,8 @@ export function buildSeed() {
     },
   ]
 
-  // Demo: available head-count per position, entered month by month (Jan..Dez).
-  // Keys must match real position names from the Personalkosten section.
-  const M = (a) => a
-  const headcount = {
-    'Projektleiter/in': M([1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]),
-    'Projektingenieur/in': M([1, 1, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1]),
-    'Konstrukteur/in - Stückliste & D-FMEA': M([1, 2, 3, 3, 4, 4, 4, 3, 3, 2, 2, 1]),
-    'Konstrukteur/in - HiSi: Schaum (Einsatz DLE, Kabelabgang)': M([
-      0, 1, 2, 2, 3, 3, 3, 2, 2, 1, 1, 0,
-    ]),
-    'Messingenieur (K-KSA,H-P.,Klima,SHZ)_CU210': M([0, 0, 1, 1, 2, 2, 2, 1, 1, 1, 0, 0]),
-    'Modulkonstrukteur/in': M([1, 1, 1, 2, 2, 2, 2, 2, 1, 1, 1, 1]),
-  }
+  // Standard: every Personalkosten position staffed with 5 people per month.
+  const headcount = defaultHeadcount(5)
 
   return { projects, capacity: {}, headcount, settings: { hoursPerFTEPerYear: 1600 } }
 }

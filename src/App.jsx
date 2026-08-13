@@ -1,10 +1,11 @@
+import { useState } from 'react'
 import { useStore, actions } from './store.js'
-import { portfolioTotals } from './lib/resource.js'
+import { portfolioTotals, monthlyCapacityHours, monthlyHeadcount } from './lib/resource.js'
 import { fmt } from './lib/util.js'
 import ProjectsPanel from './components/ProjectsPanel.jsx'
 import ResourceMountChart from './components/ResourceMountChart.jsx'
-import WorkGroupCapacity from './components/WorkGroupCapacity.jsx'
 import PositionCapacity from './components/PositionCapacity.jsx'
+import ProjectData from './components/ProjectData.jsx'
 import { IconLayers, IconChart, IconUsers, IconFile } from './components/icons.jsx'
 
 function Stat({ icon, label, value, sub, tone = 'brand' }) {
@@ -28,12 +29,30 @@ function Stat({ icon, label, value, sub, tone = 'brand' }) {
   )
 }
 
+function NavTab({ active, onClick, icon, children }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition-colors ${
+        active ? 'bg-brand-600 text-white' : 'text-ink-600 hover:bg-ink-100'
+      }`}
+    >
+      {icon}
+      {children}
+    </button>
+  )
+}
+
 export default function App() {
+  const [view, setView] = useState('portfolio')
   const projects = useStore((s) => s.projects)
-  const capacity = useStore((s) => s.capacity)
   const headcount = useStore((s) => s.headcount)
   const settings = useStore((s) => s.settings)
   const t = portfolioTotals(projects)
+
+  const capHours = monthlyCapacityHours(headcount, settings)
+  const avgCap = capHours.reduce((a, b) => a + b, 0) / 12
+  const avgPersons = monthlyHeadcount(headcount).reduce((a, b) => a + b, 0) / 12
 
   return (
     <div className="min-h-dvh">
@@ -43,11 +62,34 @@ export default function App() {
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-600 text-white">
             <IconLayers width={20} height={20} stroke="#fff" />
           </div>
-          <div className="flex-1">
+          <div>
             <h1 className="text-base font-extrabold leading-none text-ink-900">ProjectView</h1>
             <p className="text-xs text-ink-400">Projektbasiertes Ressourcenmanagement</p>
           </div>
-          <span className="chip bg-ink-100 text-ink-500">Prototyp</span>
+          <nav className="ml-4 flex items-center gap-1">
+            <NavTab
+              active={view === 'portfolio'}
+              onClick={() => setView('portfolio')}
+              icon={<IconChart width={16} height={16} />}
+            >
+              Portfolio & Auslastung
+            </NavTab>
+            <NavTab
+              active={view === 'data'}
+              onClick={() => setView('data')}
+              icon={<IconFile width={16} height={16} />}
+            >
+              Projektdaten
+            </NavTab>
+            <NavTab
+              active={view === 'capacity'}
+              onClick={() => setView('capacity')}
+              icon={<IconUsers width={16} height={16} />}
+            >
+              Personalkapazität
+            </NavTab>
+          </nav>
+          <span className="ml-auto chip bg-ink-100 text-ink-500">Prototyp</span>
           <button
             className="btn-ghost text-xs"
             onClick={() => {
@@ -60,47 +102,72 @@ export default function App() {
       </header>
 
       <main className="mx-auto max-w-[1600px] px-5 py-5">
-        {/* KPI row */}
-        <div className="mb-5 grid grid-cols-2 gap-4 lg:grid-cols-4">
-          <Stat
-            icon={<IconLayers width={20} height={20} />}
-            label="Projekte"
-            value={fmt(t.projects)}
-            tone="brand"
-          />
-          <Stat
-            icon={<IconFile width={20} height={20} />}
-            label="Teilprojekte"
-            value={fmt(t.subProjects)}
-            tone="ink"
-          />
-          <Stat
-            icon={<IconChart width={20} height={20} />}
-            label="Beauftragte Std"
-            value={fmt(t.awardedHours)}
-            tone="green"
-          />
-          <Stat
-            icon={<IconUsers width={20} height={20} />}
-            label="Geplante Std"
-            value={fmt(t.plannedHours)}
-            sub="schraffiert"
-            tone="accent"
-          />
-        </div>
+        {view === 'portfolio' ? (
+          <>
+            <div className="mb-5 grid grid-cols-2 gap-4 lg:grid-cols-4">
+              <Stat
+                icon={<IconLayers width={20} height={20} />}
+                label="Projekte"
+                value={fmt(t.projects)}
+                tone="brand"
+              />
+              <Stat
+                icon={<IconFile width={20} height={20} />}
+                label="Teilprojekte"
+                value={fmt(t.subProjects)}
+                tone="ink"
+              />
+              <Stat
+                icon={<IconChart width={20} height={20} />}
+                label="Beauftragte Std"
+                value={fmt(t.awardedHours)}
+                tone="green"
+              />
+              <Stat
+                icon={<IconUsers width={20} height={20} />}
+                label="Geplante Std"
+                value={fmt(t.plannedHours)}
+                sub="schraffiert"
+                tone="accent"
+              />
+            </div>
 
-        {/* Two-column workspace */}
-        <div className="grid gap-5 xl:grid-cols-[400px_minmax(0,1fr)]">
-          <aside className="xl:sticky xl:top-[72px] xl:max-h-[calc(100dvh-92px)] xl:overflow-y-auto xl:pr-1">
-            <ProjectsPanel projects={projects} />
-          </aside>
-
-          <section className="space-y-5">
-            <ResourceMountChart projects={projects} headcount={headcount} settings={settings} />
-            <PositionCapacity projects={projects} headcount={headcount} settings={settings} />
-            <WorkGroupCapacity projects={projects} capacity={capacity} settings={settings} />
-          </section>
-        </div>
+            <div className="grid gap-5 xl:grid-cols-[400px_minmax(0,1fr)]">
+              <aside className="xl:sticky xl:top-[72px] xl:max-h-[calc(100dvh-92px)] xl:overflow-y-auto xl:pr-1">
+                <ProjectsPanel projects={projects} />
+              </aside>
+              <section>
+                <ResourceMountChart projects={projects} headcount={headcount} settings={settings} />
+              </section>
+            </div>
+          </>
+        ) : view === 'data' ? (
+          <ProjectData projects={projects} />
+        ) : (
+          <>
+            <div className="mb-5 grid grid-cols-2 gap-4 lg:grid-cols-3">
+              <Stat
+                icon={<IconUsers width={20} height={20} />}
+                label="⌀ Personen / Monat"
+                value={fmt(avgPersons, 0)}
+                tone="brand"
+              />
+              <Stat
+                icon={<IconChart width={20} height={20} />}
+                label="⌀ Kapazität Std / Monat"
+                value={fmt(avgCap)}
+                tone="green"
+              />
+              <Stat
+                icon={<IconFile width={20} height={20} />}
+                label="FTE-Stunden / Jahr"
+                value={fmt(settings?.hoursPerFTEPerYear || 1600)}
+                tone="ink"
+              />
+            </div>
+            <PositionCapacity headcount={headcount} settings={settings} />
+          </>
+        )}
 
         <footer className="mt-8 border-t border-ink-200 pt-4 text-center text-xs text-ink-400">
           ProjectView Prototyp · Daten lokal im Browser gespeichert · Demo-Daten: VW386 0EU

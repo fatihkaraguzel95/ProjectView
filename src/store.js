@@ -3,7 +3,7 @@ import { buildSeed } from './lib/seed.js'
 import { uid } from './lib/util.js'
 import { nextColor } from './lib/colors.js'
 
-const KEY = 'projectview.state.v1'
+const KEY = 'projectview.state.v2'
 
 function load() {
   try {

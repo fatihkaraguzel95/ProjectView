@@ -1,13 +1,11 @@
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 import { actions } from '../store.js'
-import { parseWorkbookFile } from '../lib/excelParser.js'
 import { projectTotalHours } from '../lib/resource.js'
 import { PROJECT_PALETTE } from '../lib/colors.js'
 import { fmt } from '../lib/util.js'
 import Modal from './Modal.jsx'
 import {
   IconPlus,
-  IconUpload,
   IconTrash,
   IconChevron,
   IconFile,
@@ -100,53 +98,12 @@ function SubProjectRow({ projectId, sub }) {
         <div className="font-bold text-ink-800">{fmt(hours)} Std</div>
         <div className="text-ink-400">{(sub.periods || []).join(', ')}</div>
       </div>
-      <button
-        className="btn-ghost shrink-0 p-1.5 text-ink-400 hover:text-red-600"
-        onClick={() => actions.removeSubProject(projectId, sub.id)}
-        aria-label="Teilprojekt löschen"
-      >
-        <IconTrash width={15} height={15} />
-      </button>
     </div>
   )
 }
 
 function ProjectCard({ project }) {
-  const fileRef = useRef(null)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  const [pendingName, setPendingName] = useState('')
   const total = projectTotalHours(project)
-
-  async function handleFiles(fileList) {
-    const files = Array.from(fileList || [])
-    if (!files.length) return
-    setBusy(true)
-    setError('')
-    try {
-      for (const file of files) {
-        const parsed = await parseWorkbookFile(file)
-        if (!parsed.positions.length) {
-          setError(`In „${file.name}" wurden keine Positionen gefunden.`)
-          continue
-        }
-        const base = pendingName || file.name.replace(/\.(xlsm|xlsx|xls|csv)$/i, '')
-        actions.addSubProject(project.id, {
-          name: base,
-          source: file.name,
-          periods: parsed.periods,
-          positions: parsed.positions,
-        })
-      }
-      setPendingName('')
-    } catch (e) {
-      console.error(e)
-      setError('Datei konnte nicht gelesen werden.')
-    } finally {
-      setBusy(false)
-      if (fileRef.current) fileRef.current.value = ''
-    }
-  }
 
   return (
     <div className="card overflow-hidden">
@@ -211,30 +168,11 @@ function ProjectCard({ project }) {
             {project.subProjects.map((sp) => (
               <SubProjectRow key={sp.id} projectId={project.id} sub={sp} />
             ))}
-
-            <input
-              value={pendingName}
-              onChange={(e) => setPendingName(e.target.value)}
-              placeholder="Teilprojekt-Name (optional)"
-              className="input text-sm"
-            />
-            <input
-              ref={fileRef}
-              type="file"
-              accept=".xlsx,.xlsm,.xls,.csv"
-              multiple
-              className="hidden"
-              onChange={(e) => handleFiles(e.target.files)}
-            />
-            <button
-              className="btn-outline w-full justify-center border-dashed text-sm"
-              onClick={() => fileRef.current?.click()}
-              disabled={busy}
-            >
-              <IconUpload width={16} height={16} />
-              {busy ? 'Wird verarbeitet…' : 'Excel-Vorlage hochladen'}
-            </button>
-            {error && <p className="text-xs font-medium text-red-600">{error}</p>}
+            {project.subProjects.length === 0 && (
+              <p className="rounded-lg border border-dashed border-ink-200 px-3 py-2 text-center text-xs text-ink-400">
+                Teilprojekte werden unter „Projektdaten" per Excel hinzugefügt.
+              </p>
+            )}
           </div>
         )}
       </div>

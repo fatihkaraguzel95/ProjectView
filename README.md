@@ -15,6 +15,14 @@ npm run dev
 Dann `http://localhost:5178` öffnen. Die App startet mit echten Demo-Daten
 (VW386 0EU – HiSi & VoSi aus `docs/`).
 
+## Seiten
+
+- **Portfolio & Auslastung** – Projektverwaltung (anlegen, Farbe, Status) + Resource Mount Chart
+- **Projektdaten** – Teilprojekt-Excel hochladen; zeigt je Teilprojekt die Positionen und den
+  Stundenbedarf als Liste (nicht das Dokument selbst)
+- **Personalkapazität** – feste Positions-Standardliste (aus den Referenz-Excels), monatliche
+  Personenzahl je Position (Standard 5), Summe wird zur Kapazitätslinie im Chart
+
 ## Funktionen (auf die Anforderungen abgebildet)
 
 | Anforderung | Umsetzung |

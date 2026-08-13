@@ -1,12 +1,13 @@
 import { useMemo } from 'react'
-import { allPositions, monthlyHeadcount, monthlyCapacityHours } from '../lib/resource.js'
+import { monthlyHeadcount, monthlyCapacityHours } from '../lib/resource.js'
+import { STANDARD_POSITIONS } from '../lib/seed.js'
 import { fmt } from '../lib/util.js'
 import { actions } from '../store.js'
 
 const MONTHS = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez']
 
-export default function PositionCapacity({ projects, headcount, settings }) {
-  const positions = useMemo(() => allPositions(projects), [projects])
+export default function PositionCapacity({ headcount, settings }) {
+  const positions = STANDARD_POSITIONS
   const totalsPersons = monthlyHeadcount(headcount)
   const totalsHours = monthlyCapacityHours(headcount, settings)
 
@@ -39,9 +40,9 @@ export default function PositionCapacity({ projects, headcount, settings }) {
         <div>
           <h2 className="text-lg font-bold text-ink-900">Personalkapazität je Position (monatlich)</h2>
           <p className="text-sm text-ink-500">
-            Positionen aus dem Bereich <strong>Personalkosten</strong> der Excel-Vorlagen. Tragen Sie
-            je Position die verfügbare Personenzahl pro Monat ein – die Summe erscheint als
-            Kapazitätslinie im Diagramm.
+            Standardliste der Positionen aus dem Bereich <strong>Personalkosten</strong> (direkt aus
+            den Referenz-Excels). Standardbelegung: 5 Personen/Monat. Passen Sie die verfügbare
+            Personenzahl je Monat an – die Summe erscheint als Kapazitätslinie im Diagramm.
           </p>
         </div>
         <span className="chip bg-brand-50 text-brand-600">{positions.length} Positionen</span>
@@ -113,15 +114,24 @@ export default function PositionCapacity({ projects, headcount, settings }) {
 }
 
 function FragmentGroup({ group, headcount, setCell, fillRow }) {
+  // group-level info: sum of persons per month across the group's positions
+  const groupTotals = Array(12).fill(0)
+  for (const p of group.items) {
+    const r = headcount[p.position] || []
+    for (let m = 0; m < 12; m++) groupTotals[m] += Number(r[m]) || 0
+  }
   return (
     <>
       <tr>
-        <td
-          colSpan={14}
-          className="sticky left-0 bg-ink-50 px-2 py-1.5 text-xs font-bold uppercase tracking-wide text-ink-500"
-        >
+        <td className="sticky left-0 z-10 bg-ink-50 px-2 py-1.5 text-left text-xs font-bold uppercase tracking-wide text-ink-500">
           {group.name}
         </td>
+        {groupTotals.map((v, i) => (
+          <td key={i} className="tnum bg-ink-50 px-1 py-1.5 text-center text-xs font-semibold text-ink-400">
+            {v || ''}
+          </td>
+        ))}
+        <td className="bg-ink-50" />
       </tr>
       {group.items.map((p) => {
         const row = headcount[p.position] || []
