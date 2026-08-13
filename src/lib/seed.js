@@ -65,6 +65,13 @@ export function buildSeed() {
 
   // Standard: every Personalkosten position staffed with 5 people per month.
   const headcount = defaultHeadcount(5)
+  const capacityPositions = STANDARD_POSITIONS.map((p) => ({ ...p }))
 
-  return { projects, capacity: {}, headcount, settings: { hoursPerFTEPerYear: 1600 } }
+  return {
+    projects,
+    capacity: {},
+    capacityPositions,
+    headcount,
+    settings: { hoursPerFTEPerYear: 1600 },
+  }
 }

@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { useStore, actions } from './store.js'
 import { portfolioTotals, monthlyCapacityHours, monthlyHeadcount } from './lib/resource.js'
 import { fmt } from './lib/util.js'
-import ProjectsPanel from './components/ProjectsPanel.jsx'
 import ResourceMountChart from './components/ResourceMountChart.jsx'
 import PositionCapacity from './components/PositionCapacity.jsx'
 import ProjectData from './components/ProjectData.jsx'
@@ -132,14 +131,7 @@ export default function App() {
               />
             </div>
 
-            <div className="grid gap-5 xl:grid-cols-[400px_minmax(0,1fr)]">
-              <aside className="xl:sticky xl:top-[72px] xl:max-h-[calc(100dvh-92px)] xl:overflow-y-auto xl:pr-1">
-                <ProjectsPanel projects={projects} />
-              </aside>
-              <section>
-                <ResourceMountChart projects={projects} headcount={headcount} settings={settings} />
-              </section>
-            </div>
+            <ResourceMountChart projects={projects} headcount={headcount} settings={settings} />
           </>
         ) : view === 'data' ? (
           <ProjectData projects={projects} />

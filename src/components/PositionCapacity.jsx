@@ -1,15 +1,33 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { monthlyHeadcount, monthlyCapacityHours } from '../lib/resource.js'
-import { STANDARD_POSITIONS } from '../lib/seed.js'
 import { fmt } from '../lib/util.js'
-import { actions } from '../store.js'
+import { actions, useStore } from '../store.js'
+import Modal from './Modal.jsx'
+import { IconPlus, IconTrash } from './icons.jsx'
 
 const MONTHS = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez']
 
 export default function PositionCapacity({ headcount, settings }) {
-  const positions = STANDARD_POSITIONS
+  const positions = useStore((s) => s.capacityPositions)
+  const [addOpen, setAddOpen] = useState(false)
+  const [form, setForm] = useState({ workGroup: '', position: '', people: 5 })
   const totalsPersons = monthlyHeadcount(headcount)
   const totalsHours = monthlyCapacityHours(headcount, settings)
+
+  const existingGroups = useMemo(
+    () => [...new Set(positions.map((p) => p.workGroup))],
+    [positions],
+  )
+
+  const createPosition = () => {
+    if (!form.position.trim()) return
+    actions.addCapacityPosition(
+      { workGroup: form.workGroup.trim() || 'Sonstige', position: form.position.trim() },
+      Math.max(0, Number(form.people) || 0),
+    )
+    setForm({ workGroup: '', position: '', people: 5 })
+    setAddOpen(false)
+  }
 
   // group positions by work group for readable section headers
   const groups = useMemo(() => {
@@ -45,12 +63,20 @@ export default function PositionCapacity({ headcount, settings }) {
             Personenzahl je Monat an – die Summe erscheint als Kapazitätslinie im Diagramm.
           </p>
         </div>
-        <span className="chip bg-brand-50 text-brand-600">{positions.length} Positionen</span>
+        <div className="flex items-center gap-2">
+          <span className="chip bg-brand-50 text-brand-600">{positions.length} Positionen</span>
+          <button className="btn-primary text-xs" onClick={() => setAddOpen(true)}>
+            <IconPlus width={14} height={14} /> Position
+          </button>
+        </div>
       </div>
 
       {positions.length === 0 ? (
-        <div className="flex h-40 items-center justify-center rounded-lg border border-dashed border-ink-200 text-sm text-ink-400">
-          Keine Positionen – laden Sie eine Excel-Vorlage mit Personalkosten-Bereich.
+        <div className="flex h-40 flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-ink-200 text-sm text-ink-400">
+          Keine Positionen.
+          <button className="btn-outline text-xs" onClick={() => setAddOpen(true)}>
+            <IconPlus width={14} height={14} /> Position hinzufügen
+          </button>
         </div>
       ) : (
         <div className="overflow-x-auto">
@@ -76,6 +102,7 @@ export default function PositionCapacity({ headcount, settings }) {
                   headcount={headcount}
                   setCell={setCell}
                   fillRow={fillRow}
+                  onRemove={(pos) => actions.removeCapacityPosition(pos)}
                 />
               ))}
               {/* totals */}
@@ -109,11 +136,67 @@ export default function PositionCapacity({ headcount, settings }) {
         Das Monatsmuster (Jan–Dez) gilt für jedes Jahr der Zeitachse. „→“ überträgt den Januar-Wert
         auf alle Monate.
       </p>
+
+      <Modal
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        title="Position hinzufügen"
+        footer={
+          <>
+            <button className="btn-ghost" onClick={() => setAddOpen(false)}>
+              Abbrechen
+            </button>
+            <button className="btn-primary" onClick={createPosition}>
+              Hinzufügen
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-ink-600">Position</label>
+            <input
+              autoFocus
+              className="input"
+              value={form.position}
+              onChange={(e) => setForm({ ...form, position: e.target.value })}
+              placeholder="z. B. Projektleiter/in"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-ink-600">Arbeitsgruppe</label>
+            <input
+              className="input"
+              list="capacity-groups"
+              value={form.workGroup}
+              onChange={(e) => setForm({ ...form, workGroup: e.target.value })}
+              placeholder="z. B. Konstruktion"
+            />
+            <datalist id="capacity-groups">
+              {existingGroups.map((g) => (
+                <option key={g} value={g} />
+              ))}
+            </datalist>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-ink-600">
+              Personen / Monat (Startwert)
+            </label>
+            <input
+              type="number"
+              min="0"
+              className="input"
+              value={form.people}
+              onChange={(e) => setForm({ ...form, people: e.target.value })}
+            />
+          </div>
+        </div>
+      </Modal>
     </div>
   )
 }
 
-function FragmentGroup({ group, headcount, setCell, fillRow }) {
+function FragmentGroup({ group, headcount, setCell, fillRow, onRemove }) {
   // group-level info: sum of persons per month across the group's positions
   const groupTotals = Array(12).fill(0)
   for (const p of group.items) {
@@ -155,13 +238,22 @@ function FragmentGroup({ group, headcount, setCell, fillRow }) {
                 />
               </td>
             ))}
-            <td className="px-1 text-center">
+            <td className="whitespace-nowrap px-1 text-center">
               <button
                 onClick={() => fillRow(p.position)}
                 className="rounded-md px-1.5 py-1 text-xs font-bold text-ink-400 hover:bg-brand-50 hover:text-brand-600"
                 title="Januar-Wert auf alle Monate übertragen"
               >
                 →
+              </button>
+              <button
+                onClick={() => {
+                  if (confirm(`Position „${p.position}" entfernen?`)) onRemove(p.position)
+                }}
+                className="rounded-md p-1 text-ink-300 hover:bg-red-50 hover:text-red-600"
+                title="Position entfernen"
+              >
+                <IconTrash width={13} height={13} />
               </button>
             </td>
           </tr>

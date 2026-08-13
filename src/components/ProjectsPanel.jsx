@@ -12,7 +12,7 @@ import {
   IconCheck,
 } from './icons.jsx'
 
-function StatusToggle({ status, onChange }) {
+export function StatusToggle({ status, onChange }) {
   return (
     <div className="inline-flex rounded-lg border border-ink-300 p-0.5 text-xs">
       {[
@@ -37,7 +37,7 @@ function StatusToggle({ status, onChange }) {
   )
 }
 
-function ColorPicker({ color, onChange }) {
+export function ColorPicker({ color, onChange }) {
   const [open, setOpen] = useState(false)
   return (
     <div className="relative">

@@ -2,17 +2,9 @@ import { useRef, useState, useMemo } from 'react'
 import { actions } from '../store.js'
 import { parseWorkbookFile } from '../lib/excelParser.js'
 import { fmt } from '../lib/util.js'
-import { IconUpload, IconTrash, IconFile, IconChart } from './icons.jsx'
-
-function StatusDot({ status }) {
-  return (
-    <span
-      className={`inline-block h-2 w-2 rounded-full ${
-        status === 'awarded' ? 'bg-brand-600' : 'bg-accent-500'
-      }`}
-    />
-  )
-}
+import Modal from './Modal.jsx'
+import { ColorPicker, StatusToggle } from './ProjectsPanel.jsx'
+import { IconUpload, IconTrash, IconFile, IconChart, IconPlus } from './icons.jsx'
 
 // Upload control that adds a sub-project (parsed from Excel) to a project.
 function UploadButton({ projectId, onAdded }) {
@@ -75,12 +67,13 @@ function UploadButton({ projectId, onAdded }) {
 }
 
 // Groups a sub-project's positions by work group with per-period + total hours.
+// Keeps each position's original index so rows can be deleted precisely.
 function groupPositions(sub) {
   const groups = new Map()
-  for (const p of sub.positions) {
+  sub.positions.forEach((p, idx) => {
     if (!groups.has(p.workGroup)) groups.set(p.workGroup, [])
-    groups.get(p.workGroup).push(p)
-  }
+    groups.get(p.workGroup).push({ ...p, __idx: idx })
+  })
   return [...groups.entries()].map(([name, items]) => ({
     name,
     items,
@@ -90,6 +83,16 @@ function groupPositions(sub) {
 
 export default function ProjectData({ projects }) {
   const [selected, setSelected] = useState(null) // { projectId, subId }
+  const [addOpen, setAddOpen] = useState(false)
+  const [form, setForm] = useState({ name: '', client: '', status: 'awarded' })
+  const [posOpen, setPosOpen] = useState(false)
+  const [posForm, setPosForm] = useState({ workGroup: '', position: '', hours: {} })
+
+  const createProject = () => {
+    actions.addProject(form)
+    setForm({ name: '', client: '', status: 'awarded' })
+    setAddOpen(false)
+  }
 
   // resolve current selection against live data, else pick first available
   const resolved = useMemo(() => {
@@ -116,22 +119,69 @@ export default function ProjectData({ projects }) {
   const periods = sub?.periods || []
   const totalHours = sub ? sub.positions.reduce((a, p) => a + (p.totalHours || 0), 0) : 0
 
+  const createPosition = () => {
+    if (!sub || !posForm.position.trim()) return
+    const hoursByPeriod = {}
+    let total = 0
+    for (const per of periods) {
+      const v = Math.max(0, Number(posForm.hours[per]) || 0)
+      hoursByPeriod[per] = v
+      total += v
+    }
+    actions.addSubPosition(project.id, sub.id, {
+      workGroup: posForm.workGroup.trim() || 'Sonstige',
+      position: posForm.position.trim(),
+      hoursByPeriod,
+      totalHours: total,
+    })
+    setPosForm({ workGroup: '', position: '', hours: {} })
+    setPosOpen(false)
+  }
+
+  const groupNames = sub ? [...new Set(sub.positions.map((p) => p.workGroup))] : []
+
   return (
     <div className="grid gap-5 xl:grid-cols-[360px_minmax(0,1fr)]">
       {/* navigator */}
       <aside className="card h-max p-3">
-        <h2 className="px-2 pb-2 pt-1 text-sm font-bold uppercase tracking-wide text-ink-500">
-          Projekte & Teilprojekte
-        </h2>
+        <div className="flex items-center justify-between px-2 pb-2 pt-1">
+          <h2 className="text-sm font-bold uppercase tracking-wide text-ink-500">
+            Projekte & Teilprojekte
+          </h2>
+          <button className="btn-primary px-2 py-1 text-xs" onClick={() => setAddOpen(true)}>
+            <IconPlus width={14} height={14} /> Projekt
+          </button>
+        </div>
         <div className="space-y-3">
           {projects.map((p) => (
-            <div key={p.id}>
-              <div className="flex items-center gap-2 px-2 py-1">
-                <span className="h-3 w-3 rounded-sm" style={{ background: p.color }} />
-                <span className="flex-1 truncate text-sm font-bold text-ink-800">{p.name}</span>
-                <StatusDot status={p.status} />
+            <div key={p.id} className="rounded-xl border border-ink-100 p-2">
+              <div className="flex items-center gap-2">
+                <ColorPicker
+                  color={p.color}
+                  onChange={(c) => actions.updateProject(p.id, { color: c })}
+                />
+                <input
+                  value={p.name}
+                  onChange={(e) => actions.updateProject(p.id, { name: e.target.value })}
+                  className="min-w-0 flex-1 truncate border-none bg-transparent p-0 text-sm font-bold text-ink-800 outline-none focus:ring-0"
+                />
+                <button
+                  className="btn-ghost shrink-0 p-1 text-ink-400 hover:text-red-600"
+                  onClick={() => {
+                    if (confirm(`Projekt „${p.name}" löschen?`)) actions.removeProject(p.id)
+                  }}
+                  aria-label="Projekt löschen"
+                >
+                  <IconTrash width={14} height={14} />
+                </button>
               </div>
-              <div className="mt-1 space-y-1 pl-2">
+              <div className="mt-1.5 px-0.5">
+                <StatusToggle
+                  status={p.status}
+                  onChange={(s) => actions.updateProject(p.id, { status: s })}
+                />
+              </div>
+              <div className="mt-2 space-y-1">
                 {p.subProjects.map((s) => {
                   const active = sub?.id === s.id
                   const h = s.positions.reduce((a, x) => a + (x.totalHours || 0), 0)
@@ -220,7 +270,13 @@ export default function ProjectData({ projects }) {
               </div>
             </div>
 
-            <div className="mt-4 overflow-x-auto">
+            <div className="mt-4 flex items-center justify-between">
+              <h3 className="text-sm font-bold text-ink-700">Positionen & Stundenbedarf</h3>
+              <button className="btn-outline text-xs" onClick={() => setPosOpen(true)}>
+                <IconPlus width={14} height={14} /> Position
+              </button>
+            </div>
+            <div className="mt-2 overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-ink-200 text-left text-xs font-semibold uppercase tracking-wide text-ink-500">
@@ -231,11 +287,17 @@ export default function ProjectData({ projects }) {
                       </th>
                     ))}
                     <th className="px-2 py-2 text-right">Summe (Std)</th>
+                    <th className="w-8 px-2 py-2" />
                   </tr>
                 </thead>
                 <tbody>
                   {groups.map((g) => (
-                    <FragmentGroup key={g.name} group={g} periods={periods} />
+                    <FragmentGroup
+                      key={g.name}
+                      group={g}
+                      periods={periods}
+                      onRemove={(idx) => actions.removeSubPosition(project.id, sub.id, idx)}
+                    />
                   ))}
                   <tr className="border-t-2 border-ink-200 bg-brand-50/50">
                     <td className="px-2 py-2 font-bold text-ink-800">Gesamt</td>
@@ -247,6 +309,7 @@ export default function ProjectData({ projects }) {
                     <td className="tnum px-2 py-2 text-right font-extrabold text-brand-700">
                       {fmt(totalHours)}
                     </td>
+                    <td />
                   </tr>
                 </tbody>
               </table>
@@ -254,11 +317,127 @@ export default function ProjectData({ projects }) {
           </>
         )}
       </section>
+
+      {/* add project modal */}
+      <Modal
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        title="Neues Projekt"
+        footer={
+          <>
+            <button className="btn-ghost" onClick={() => setAddOpen(false)}>
+              Abbrechen
+            </button>
+            <button className="btn-primary" onClick={createProject}>
+              Erstellen
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-ink-600">Projektname</label>
+            <input
+              autoFocus
+              className="input"
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              placeholder="z. B. VW386 0EU · T-ROC"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-ink-600">Kunde / Phase</label>
+            <input
+              className="input"
+              value={form.client}
+              onChange={(e) => setForm({ ...form, client: e.target.value })}
+              placeholder="z. B. Volkswagen AG"
+            />
+          </div>
+          <div>
+            <label className="mb-1.5 block text-xs font-semibold text-ink-600">Status</label>
+            <StatusToggle status={form.status} onChange={(s) => setForm({ ...form, status: s })} />
+          </div>
+        </div>
+      </Modal>
+
+      {/* add position modal */}
+      <Modal
+        open={posOpen}
+        onClose={() => setPosOpen(false)}
+        title="Position hinzufügen"
+        footer={
+          <>
+            <button className="btn-ghost" onClick={() => setPosOpen(false)}>
+              Abbrechen
+            </button>
+            <button className="btn-primary" onClick={createPosition}>
+              Hinzufügen
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-ink-600">Position</label>
+            <input
+              autoFocus
+              className="input"
+              value={posForm.position}
+              onChange={(e) => setPosForm({ ...posForm, position: e.target.value })}
+              placeholder="z. B. Konstrukteur/in - HiSi"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-ink-600">Arbeitsgruppe</label>
+            <input
+              className="input"
+              list="data-groups"
+              value={posForm.workGroup}
+              onChange={(e) => setPosForm({ ...posForm, workGroup: e.target.value })}
+              placeholder="z. B. Konstruktion"
+            />
+            <datalist id="data-groups">
+              {groupNames.map((g) => (
+                <option key={g} value={g} />
+              ))}
+            </datalist>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-ink-600">
+              Stundenbedarf je Periode
+            </label>
+            <div className="flex flex-wrap gap-2">
+              {periods.map((per) => (
+                <div key={per} className="flex items-center gap-1">
+                  <span className="text-xs font-semibold text-ink-500">{per}</span>
+                  <input
+                    type="number"
+                    min="0"
+                    className="tnum w-24 rounded-lg border border-ink-300 px-2 py-1 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
+                    value={posForm.hours[per] || ''}
+                    onChange={(e) =>
+                      setPosForm({
+                        ...posForm,
+                        hours: { ...posForm.hours, [per]: e.target.value },
+                      })
+                    }
+                    placeholder="0"
+                  />
+                </div>
+              ))}
+              {periods.length === 0 && (
+                <p className="text-xs text-ink-400">Dieses Teilprojekt hat keine Perioden.</p>
+              )}
+            </div>
+          </div>
+        </div>
+      </Modal>
     </div>
   )
 }
 
-function FragmentGroup({ group, periods }) {
+function FragmentGroup({ group, periods, onRemove }) {
   return (
     <>
       <tr className="bg-ink-50">
@@ -273,9 +452,10 @@ function FragmentGroup({ group, periods }) {
         <td className="tnum px-2 py-1.5 text-right text-xs font-semibold text-ink-500">
           {fmt(group.total)}
         </td>
+        <td className="bg-ink-50" />
       </tr>
-      {group.items.map((p, i) => (
-        <tr key={i} className="border-t border-ink-100 hover:bg-ink-50/50">
+      {group.items.map((p) => (
+        <tr key={p.__idx} className="group border-t border-ink-100 hover:bg-ink-50/50">
           <td className="px-2 py-1.5 pl-4 text-ink-800" title={p.position}>
             <div className="max-w-[420px] truncate">{p.position}</div>
           </td>
@@ -286,6 +466,17 @@ function FragmentGroup({ group, periods }) {
           ))}
           <td className="tnum px-2 py-1.5 text-right font-semibold text-ink-800">
             {fmt(p.totalHours)}
+          </td>
+          <td className="px-1 text-center">
+            <button
+              onClick={() => {
+                if (confirm(`Position „${p.position}" entfernen?`)) onRemove(p.__idx)
+              }}
+              className="rounded-md p-1 text-ink-300 hover:bg-red-50 hover:text-red-600"
+              title="Position entfernen"
+            >
+              <IconTrash width={13} height={13} />
+            </button>
           </td>
         </tr>
       ))}

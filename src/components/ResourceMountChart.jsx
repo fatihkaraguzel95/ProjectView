@@ -215,7 +215,7 @@ export default function ResourceMountChart({ projects, headcount, settings }) {
       {!hasData ? (
         <EmptyChart />
       ) : (
-        <ResponsiveContainer width="100%" height={400}>
+        <ResponsiveContainer width="100%" height={540}>
           <ComposedChart data={monthlyData} margin={{ top: 28, right: 16, left: 4, bottom: 4 }}>
             <defs>
               {series.map((s) =>

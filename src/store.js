@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react'
-import { buildSeed } from './lib/seed.js'
+import { buildSeed, STANDARD_POSITIONS } from './lib/seed.js'
 import { uid } from './lib/util.js'
 import { nextColor } from './lib/colors.js'
 
@@ -14,6 +14,8 @@ function load() {
       if (!parsed.headcount) parsed.headcount = {}
       if (!parsed.capacity) parsed.capacity = {}
       if (!parsed.settings) parsed.settings = { hoursPerFTEPerYear: 1600 }
+      if (!parsed.capacityPositions)
+        parsed.capacityPositions = STANDARD_POSITIONS.map((p) => ({ ...p }))
       return parsed
     }
   } catch (e) {
@@ -144,6 +146,65 @@ export const actions = {
           : p,
       ),
     }))
+  },
+
+  // add/remove a single position row inside a sub-project
+  addSubPosition(projectId, subId, position) {
+    setState((s) => ({
+      ...s,
+      projects: s.projects.map((p) =>
+        p.id === projectId
+          ? {
+              ...p,
+              subProjects: p.subProjects.map((sp) =>
+                sp.id === subId ? { ...sp, positions: [...sp.positions, position] } : sp,
+              ),
+            }
+          : p,
+      ),
+    }))
+  },
+
+  removeSubPosition(projectId, subId, index) {
+    setState((s) => ({
+      ...s,
+      projects: s.projects.map((p) =>
+        p.id === projectId
+          ? {
+              ...p,
+              subProjects: p.subProjects.map((sp) =>
+                sp.id === subId
+                  ? { ...sp, positions: sp.positions.filter((_, i) => i !== index) }
+                  : sp,
+              ),
+            }
+          : p,
+      ),
+    }))
+  },
+
+  // capacity positions (Personalkapazität list)
+  addCapacityPosition({ workGroup, position }, people = 5) {
+    setState((s) => {
+      if (s.capacityPositions.some((p) => p.position === position)) return s
+      return {
+        ...s,
+        capacityPositions: [...s.capacityPositions, { workGroup: workGroup || 'Sonstige', position }],
+        headcount: { ...s.headcount, [position]: Array(12).fill(people) },
+      }
+    })
+  },
+
+  removeCapacityPosition(position) {
+    setState((s) => {
+      const hc = { ...s.headcount }
+      delete hc[position]
+      return {
+        ...s,
+        capacityPositions: s.capacityPositions.filter((p) => p.position !== position),
+        headcount: hc,
+      }
+    })
   },
 
   setCapacity(workGroup, people) {
