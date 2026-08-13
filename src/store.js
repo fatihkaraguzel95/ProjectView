@@ -183,6 +183,82 @@ export const actions = {
     }))
   },
 
+  // set one position's hours for a given period (recomputes the row total)
+  setSubPositionHours(projectId, subId, index, period, value) {
+    const v = Math.max(0, Number(value) || 0)
+    setState((s) => ({
+      ...s,
+      projects: s.projects.map((p) =>
+        p.id === projectId
+          ? {
+              ...p,
+              subProjects: p.subProjects.map((sp) =>
+                sp.id === subId
+                  ? {
+                      ...sp,
+                      positions: sp.positions.map((pos, i) => {
+                        if (i !== index) return pos
+                        const hb = { ...pos.hoursByPeriod, [period]: v }
+                        const total = Object.values(hb).reduce((a, b) => a + (b || 0), 0)
+                        return { ...pos, hoursByPeriod: hb, totalHours: total }
+                      }),
+                    }
+                  : sp,
+              ),
+            }
+          : p,
+      ),
+    }))
+  },
+
+  // add a period (year) column to a sub-project
+  addSubPeriod(projectId, subId, period) {
+    setState((s) => ({
+      ...s,
+      projects: s.projects.map((p) =>
+        p.id === projectId
+          ? {
+              ...p,
+              subProjects: p.subProjects.map((sp) => {
+                if (sp.id !== subId) return sp
+                if ((sp.periods || []).includes(period)) return sp
+                const periods = [...(sp.periods || []), period].sort()
+                const positions = sp.positions.map((pos) => ({
+                  ...pos,
+                  hoursByPeriod: { ...pos.hoursByPeriod, [period]: pos.hoursByPeriod?.[period] || 0 },
+                }))
+                return { ...sp, periods, positions }
+              }),
+            }
+          : p,
+      ),
+    }))
+  },
+
+  removeSubPeriod(projectId, subId, period) {
+    setState((s) => ({
+      ...s,
+      projects: s.projects.map((p) =>
+        p.id === projectId
+          ? {
+              ...p,
+              subProjects: p.subProjects.map((sp) => {
+                if (sp.id !== subId) return sp
+                const periods = (sp.periods || []).filter((x) => x !== period)
+                const positions = sp.positions.map((pos) => {
+                  const hb = { ...pos.hoursByPeriod }
+                  delete hb[period]
+                  const total = Object.values(hb).reduce((a, b) => a + (b || 0), 0)
+                  return { ...pos, hoursByPeriod: hb, totalHours: total }
+                })
+                return { ...sp, periods, positions }
+              }),
+            }
+          : p,
+      ),
+    }))
+  },
+
   // capacity positions (Personalkapazität list)
   addCapacityPosition({ workGroup, position }, people = 5) {
     setState((s) => {

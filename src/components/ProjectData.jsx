@@ -4,7 +4,7 @@ import { parseWorkbookFile } from '../lib/excelParser.js'
 import { fmt } from '../lib/util.js'
 import Modal from './Modal.jsx'
 import { ColorPicker, StatusToggle } from './ProjectsPanel.jsx'
-import { IconUpload, IconTrash, IconFile, IconChart, IconPlus } from './icons.jsx'
+import { IconUpload, IconTrash, IconFile, IconChart, IconPlus, IconX } from './icons.jsx'
 
 // Upload control that adds a sub-project (parsed from Excel) to a project.
 function UploadButton({ projectId, onAdded }) {
@@ -87,6 +87,8 @@ export default function ProjectData({ projects }) {
   const [form, setForm] = useState({ name: '', client: '', status: 'awarded' })
   const [posOpen, setPosOpen] = useState(false)
   const [posForm, setPosForm] = useState({ workGroup: '', position: '', hours: {} })
+  const [yearOpen, setYearOpen] = useState(false)
+  const [yearVal, setYearVal] = useState('')
 
   const createProject = () => {
     actions.addProject(form)
@@ -139,6 +141,14 @@ export default function ProjectData({ projects }) {
   }
 
   const groupNames = sub ? [...new Set(sub.positions.map((p) => p.workGroup))] : []
+
+  const createYear = () => {
+    const y = String(yearVal).trim()
+    if (!/^\d{4}$/.test(y) || !sub) return
+    actions.addSubPeriod(project.id, sub.id, y)
+    setYearVal('')
+    setYearOpen(false)
+  }
 
   return (
     <div className="grid gap-5 xl:grid-cols-[360px_minmax(0,1fr)]">
@@ -272,9 +282,14 @@ export default function ProjectData({ projects }) {
 
             <div className="mt-4 flex items-center justify-between">
               <h3 className="text-sm font-bold text-ink-700">Positionen & Stundenbedarf</h3>
-              <button className="btn-outline text-xs" onClick={() => setPosOpen(true)}>
-                <IconPlus width={14} height={14} /> Position
-              </button>
+              <div className="flex items-center gap-2">
+                <button className="btn-outline text-xs" onClick={() => setYearOpen(true)}>
+                  <IconPlus width={14} height={14} /> Jahr
+                </button>
+                <button className="btn-outline text-xs" onClick={() => setPosOpen(true)}>
+                  <IconPlus width={14} height={14} /> Position
+                </button>
+              </div>
             </div>
             <div className="mt-2 overflow-x-auto">
               <table className="w-full text-sm">
@@ -282,8 +297,20 @@ export default function ProjectData({ projects }) {
                   <tr className="border-b border-ink-200 text-left text-xs font-semibold uppercase tracking-wide text-ink-500">
                     <th className="px-2 py-2">Position</th>
                     {periods.map((per) => (
-                      <th key={per} className="px-2 py-2 text-right">
-                        {per}
+                      <th key={per} className="group px-2 py-2 text-right">
+                        <span className="inline-flex items-center gap-1">
+                          {per}
+                          <button
+                            onClick={() => {
+                              if (confirm(`Jahr ${per} aus „${sub.name}" entfernen?`))
+                                actions.removeSubPeriod(project.id, sub.id, per)
+                            }}
+                            className="rounded p-0.5 text-ink-300 opacity-0 hover:bg-red-50 hover:text-red-600 group-hover:opacity-100"
+                            title={`Jahr ${per} entfernen`}
+                          >
+                            <IconX width={11} height={11} />
+                          </button>
+                        </span>
                       </th>
                     ))}
                     <th className="px-2 py-2 text-right">Summe (Std)</th>
@@ -297,6 +324,9 @@ export default function ProjectData({ projects }) {
                       group={g}
                       periods={periods}
                       onRemove={(idx) => actions.removeSubPosition(project.id, sub.id, idx)}
+                      onEdit={(idx, per, val) =>
+                        actions.setSubPositionHours(project.id, sub.id, idx, per, val)
+                      }
                     />
                   ))}
                   <tr className="border-t-2 border-ink-200 bg-brand-50/50">
@@ -358,6 +388,40 @@ export default function ProjectData({ projects }) {
             <label className="mb-1.5 block text-xs font-semibold text-ink-600">Status</label>
             <StatusToggle status={form.status} onChange={(s) => setForm({ ...form, status: s })} />
           </div>
+        </div>
+      </Modal>
+
+      {/* add year modal */}
+      <Modal
+        open={yearOpen}
+        onClose={() => setYearOpen(false)}
+        title="Jahr hinzufügen"
+        footer={
+          <>
+            <button className="btn-ghost" onClick={() => setYearOpen(false)}>
+              Abbrechen
+            </button>
+            <button className="btn-primary" onClick={createYear}>
+              Hinzufügen
+            </button>
+          </>
+        }
+      >
+        <div>
+          <label className="mb-1 block text-xs font-semibold text-ink-600">Jahr (JJJJ)</label>
+          <input
+            autoFocus
+            type="number"
+            className="input"
+            value={yearVal}
+            onChange={(e) => setYearVal(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && createYear()}
+            placeholder="z. B. 2026"
+          />
+          <p className="mt-2 text-xs text-ink-400">
+            Fügt eine neue Spalte hinzu (Startwert 0 für alle Positionen). Die Zeitachse im
+            Diagramm wird automatisch erweitert.
+          </p>
         </div>
       </Modal>
 
@@ -437,7 +501,7 @@ export default function ProjectData({ projects }) {
   )
 }
 
-function FragmentGroup({ group, periods, onRemove }) {
+function FragmentGroup({ group, periods, onRemove, onEdit }) {
   return (
     <>
       <tr className="bg-ink-50">
@@ -460,8 +524,15 @@ function FragmentGroup({ group, periods, onRemove }) {
             <div className="max-w-[420px] truncate">{p.position}</div>
           </td>
           {periods.map((per) => (
-            <td key={per} className="tnum px-2 py-1.5 text-right text-ink-600">
-              {p.hoursByPeriod?.[per] ? fmt(p.hoursByPeriod[per]) : '–'}
+            <td key={per} className="px-1 py-1 text-right">
+              <input
+                type="number"
+                min="0"
+                value={p.hoursByPeriod?.[per] ?? ''}
+                onChange={(e) => onEdit(p.__idx, per, e.target.value)}
+                className="tnum h-8 w-20 rounded-md border border-transparent bg-transparent px-1.5 text-right text-ink-700 outline-none hover:border-ink-200 focus:border-brand-500 focus:bg-white focus:ring-1 focus:ring-brand-100"
+                placeholder="0"
+              />
             </td>
           ))}
           <td className="tnum px-2 py-1.5 text-right font-semibold text-ink-800">
