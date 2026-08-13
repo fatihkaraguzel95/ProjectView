@@ -1,9 +1,10 @@
 import { useSyncExternalStore } from 'react'
 import { buildSeed, STANDARD_POSITIONS } from './lib/seed.js'
+import { allPeriods } from './lib/resource.js'
 import { uid } from './lib/util.js'
 import { nextColor } from './lib/colors.js'
 
-const KEY = 'projectview.state.v2'
+const KEY = 'projectview.state.v3'
 
 function load() {
   try {
@@ -263,10 +264,13 @@ export const actions = {
   addCapacityPosition({ workGroup, position }, people = 5) {
     setState((s) => {
       if (s.capacityPositions.some((p) => p.position === position)) return s
+      const years = allPeriods(s.projects)
+      const perYear = {}
+      for (const y of years) perYear[y] = Array(12).fill(people)
       return {
         ...s,
         capacityPositions: [...s.capacityPositions, { workGroup: workGroup || 'Sonstige', position }],
-        headcount: { ...s.headcount, [position]: Array(12).fill(people) },
+        headcount: { ...s.headcount, [position]: perYear },
       }
     })
   },
@@ -290,25 +294,27 @@ export const actions = {
     }))
   },
 
-  // Monthly head-count per position: months is a 12-length array (Jan..Dez).
-  setHeadcountMonth(position, monthIdx, value) {
+  // Monthly head-count per position PER YEAR. headcount[position][year] = [12].
+  setHeadcountMonth(position, year, monthIdx, value) {
     setState((s) => {
-      const cur = (s.headcount && s.headcount[position]) || Array(12).fill(0)
+      const perYear = (s.headcount && s.headcount[position]) || {}
+      const cur = perYear[year] || Array(12).fill(0)
       const next = [...cur]
-      next[monthIdx] = value
-      return { ...s, headcount: { ...s.headcount, [position]: next } }
+      next[monthIdx] = Math.max(0, Number(value) || 0)
+      return {
+        ...s,
+        headcount: { ...s.headcount, [position]: { ...perYear, [year]: next } },
+      }
     })
   },
 
-  setHeadcountRow(position, months) {
-    setState((s) => ({ ...s, headcount: { ...s.headcount, [position]: months.slice(0, 12) } }))
-  },
-
-  clearHeadcount(position) {
+  setHeadcountRow(position, year, months) {
     setState((s) => {
-      const next = { ...s.headcount }
-      delete next[position]
-      return { ...s, headcount: next }
+      const perYear = (s.headcount && s.headcount[position]) || {}
+      return {
+        ...s,
+        headcount: { ...s.headcount, [position]: { ...perYear, [year]: months.slice(0, 12) } },
+      }
     })
   },
 

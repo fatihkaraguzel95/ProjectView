@@ -10,7 +10,7 @@ import {
   ReferenceLine,
   ResponsiveContainer,
 } from 'recharts'
-import { mountChartData, monthlyCapacityHours } from '../lib/resource.js'
+import { mountChartData, monthlyCapacityHoursForYear } from '../lib/resource.js'
 import { fmt } from '../lib/util.js'
 
 const MONTHS = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez']
@@ -77,13 +77,14 @@ export default function ResourceMountChart({ projects, headcount, settings }) {
   const { data, series } = useMemo(() => mountChartData(projects), [projects])
   const divisor = unit === 'fte' ? hoursPerFTE : 1
 
-  // capacity per month (Jan..Dez) in hours, from the position head-count grid
-  const capVectorHours = useMemo(
-    () => monthlyCapacityHours(headcount, settings),
-    [headcount, settings],
-  )
-  const capVector = capVectorHours.map((h) => h / divisor)
-  const hasCapacity = capVectorHours.some((v) => v > 0)
+  // capacity per (year, month) in hours — the head-count grid is year-specific
+  const capByYear = useMemo(() => {
+    const years = [...new Set(data.map((r) => String(r.period)))]
+    const map = {}
+    for (const y of years) map[y] = monthlyCapacityHoursForYear(headcount, settings, y)
+    return map
+  }, [data, headcount, settings])
+  const hasCapacity = Object.values(capByYear).some((v) => v.some((x) => x > 0))
 
   const visibleSeries = series.filter((s) => !hidden.has(s.id))
   const yearlyDisplay = useMemo(() => {
@@ -100,23 +101,25 @@ export default function ResourceMountChart({ projects, headcount, settings }) {
     })
   }, [data, series, hidden, divisor])
 
-  // Break each yearly period into 12 monthly buckets; overlay the monthly
-  // capacity vector so the capacity line varies month by month.
+  // Break each yearly period into 12 monthly buckets; overlay that year's
+  // monthly capacity so the capacity line varies by year and month.
   const monthlyData = useMemo(() => {
     const sorted = [...yearlyDisplay].sort((a, b) => String(a.period).localeCompare(String(b.period)))
     const rows = []
     for (const row of sorted) {
-      const yy = String(row.period).slice(-2)
+      const y = String(row.period)
+      const yy = y.slice(-2)
+      const cap = capByYear[y] || []
       for (let m = 0; m < 12; m++) {
-        const out = { label: `${MONTHS[m]} ${yy}`, year: String(row.period), m, isYearStart: m === 0 }
+        const out = { label: `${MONTHS[m]} ${yy}`, year: y, m, isYearStart: m === 0 }
         for (const s of series) out[s.id] = (row[s.id] || 0) / 12
         out.__total = (row.__total || 0) / 12
-        out.__cap = capVector[m] || 0
+        out.__cap = (cap[m] || 0) / divisor
         rows.push(out)
       }
     }
     return rows
-  }, [yearlyDisplay, series, capVector])
+  }, [yearlyDisplay, series, capByYear, divisor])
 
   const toggle = (id) =>
     setHidden((prev) => {
@@ -146,7 +149,7 @@ export default function ResourceMountChart({ projects, headcount, settings }) {
   const hasData = series.length > 0 && data.some((r) => visibleSeries.some((s) => r[s.id] > 0))
   const maxTotal = Math.max(0, ...monthlyData.map((r) => Math.max(r.__total, r.__cap)))
   const yearStarts = monthlyData.filter((r) => r.isYearStart)
-  const peakCap = Math.max(0, ...capVector)
+  const peakCap = Math.max(0, ...monthlyData.map((r) => r.__cap))
 
   return (
     <div className="card p-5">

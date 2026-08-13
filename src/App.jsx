@@ -1,6 +1,11 @@
 import { useState } from 'react'
 import { useStore, actions } from './store.js'
-import { portfolioTotals, monthlyCapacityHours, monthlyHeadcount } from './lib/resource.js'
+import {
+  portfolioTotals,
+  capacityYears,
+  monthlyCapacityHoursForYear,
+  monthlyHeadcountForYear,
+} from './lib/resource.js'
 import { fmt } from './lib/util.js'
 import ResourceMountChart from './components/ResourceMountChart.jsx'
 import PositionCapacity from './components/PositionCapacity.jsx'
@@ -49,9 +54,19 @@ export default function App() {
   const settings = useStore((s) => s.settings)
   const t = portfolioTotals(projects)
 
-  const capHours = monthlyCapacityHours(headcount, settings)
-  const avgCap = capHours.reduce((a, b) => a + b, 0) / 12
-  const avgPersons = monthlyHeadcount(headcount).reduce((a, b) => a + b, 0) / 12
+  // capacity KPIs averaged across all years on the timeline
+  const years = capacityYears(projects)
+  const nY = Math.max(1, years.length)
+  const avgCap =
+    years.reduce(
+      (a, y) => a + monthlyCapacityHoursForYear(headcount, settings, y).reduce((x, v) => x + v, 0) / 12,
+      0,
+    ) / nY
+  const avgPersons =
+    years.reduce(
+      (a, y) => a + monthlyHeadcountForYear(headcount, y).reduce((x, v) => x + v, 0) / 12,
+      0,
+    ) / nY
 
   return (
     <div className="min-h-dvh">
@@ -157,7 +172,7 @@ export default function App() {
                 tone="ink"
               />
             </div>
-            <PositionCapacity headcount={headcount} settings={settings} />
+            <PositionCapacity projects={projects} headcount={headcount} settings={settings} />
           </>
         )}
 

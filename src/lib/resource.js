@@ -32,27 +32,28 @@ export function allPositions(projects) {
     )
 }
 
-// Available capacity in HOURS for each month (Jan..Dez) summed over all
-// positions: people-in-month × (FTE hours per year ÷ 12).
-export function monthlyCapacityHours(headcount, settings) {
-  const perMonth = (settings?.hoursPerFTEPerYear || 1600) / 12
-  const out = Array(12).fill(0)
-  for (const arr of Object.values(headcount || {})) {
-    if (!Array.isArray(arr)) continue
-    for (let m = 0; m < 12; m++) out[m] += (Number(arr[m]) || 0) * perMonth
-  }
-  return out
+// Years that can hold capacity data = the timeline periods across all projects.
+export function capacityYears(projects) {
+  return allPeriods(projects)
 }
 
-// Total head-count (persons) per month across all positions — used for the
-// FTE-unit capacity line and summaries.
-export function monthlyHeadcount(headcount) {
+// Total head-count (persons) per month (Jan..Dez) for one year, summed over
+// all positions. headcount shape: { [position]: { [year]: number[12] } }.
+export function monthlyHeadcountForYear(headcount, year) {
   const out = Array(12).fill(0)
-  for (const arr of Object.values(headcount || {})) {
+  for (const perYear of Object.values(headcount || {})) {
+    const arr = perYear && perYear[year]
     if (!Array.isArray(arr)) continue
     for (let m = 0; m < 12; m++) out[m] += Number(arr[m]) || 0
   }
   return out
+}
+
+// Available capacity in HOURS per month for one year:
+// persons-in-month × (FTE hours per year ÷ 12).
+export function monthlyCapacityHoursForYear(headcount, settings, year) {
+  const perMonth = (settings?.hoursPerFTEPerYear || 1600) / 12
+  return monthlyHeadcountForYear(headcount, year).map((n) => n * perMonth)
 }
 
 // Total hours for a project in a given period (sum across sub-projects & positions).

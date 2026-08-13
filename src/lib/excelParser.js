@@ -41,17 +41,19 @@ export async function parseWorkbookFile(file) {
 }
 
 export function parseWorkbook(wb, fileName = 'upload.xlsx') {
-  const personalPositions = parsePersonalkosten(wb)
-
-  // Strategy 1: EKAS sheet (real template).
-  const ekasName = wb.SheetNames.find((n) => n.trim().toLowerCase() === 'ekas')
-  if (ekasName) {
-    const res = parseEkas(wb.Sheets[ekasName])
+  // Only the sheet whose name contains "Kostenverfolgung" is relevant.
+  const sheetName = findKostenverfolgungSheet(wb)
+  if (sheetName) {
+    const res = parseKostenverfolgung(wb.Sheets[sheetName])
     if (res.positions.length)
-      return { ...res, personalPositions, meta: { fileName, sheet: ekasName, strategy: 'EKAS' } }
+      return {
+        ...res,
+        personalPositions: res.positions.map((p) => ({ workGroup: p.workGroup, position: p.position })),
+        meta: { fileName, sheet: sheetName, strategy: 'Kostenverfolgung' },
+      }
   }
 
-  // Strategy 2: generic — scan every sheet, pick the one that yields the most rows.
+  // Fallback for non-standard files: scan sheets generically.
   let best = { positions: [], periods: [] }
   let bestSheet = ''
   for (const name of wb.SheetNames) {
@@ -61,25 +63,41 @@ export function parseWorkbook(wb, fileName = 'upload.xlsx') {
       bestSheet = name
     }
   }
+  const personalPositions = best.positions.map((p) => ({ workGroup: p.workGroup, position: p.position }))
   return { ...best, personalPositions, meta: { fileName, sheet: bestSheet, strategy: 'generic' } }
 }
 
-/**
- * Extracts the job positions listed in the PERSONALKOSTEN section of a
- * "Kostenverfolgung" / "LEK" sheet — e.g. Projektleiter/in, Projektingenieur/in,
- * Konstrukteur/in …. Returns [{ workGroup, position }].
- * A row is a position when col C holds a numeric hourly rate (Std-Satz);
- * section headers (Projektsteuerung, Konstruktion …) carry text there instead.
- */
-export function parsePersonalkosten(wb) {
-  const sheetName = wb.SheetNames.find((n) => {
-    const k = n.toLowerCase()
-    return k.includes('kostenverfolgung') || k.startsWith('lek')
-  })
-  if (!sheetName) return []
-  const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, defval: null, raw: true })
+function findKostenverfolgungSheet(wb) {
+  return wb.SheetNames.find((n) => n.toLowerCase().includes('kostenverfolgung'))
+}
 
-  const out = []
+/**
+ * Parses the "Kostenverfolgung" sheet — the single source of truth.
+ * Positions = column B entries in the PERSONALKOSTEN section whose column C
+ * holds a numeric hourly rate (Std-Satz). Section headers (Projektsteuerung,
+ * Konstruktion …), "Summe …", "GESAMTSUMME", "-" placeholders and the whole
+ * MATERIALKOSTEN block are skipped.
+ * Yearly hours are read from the "Jahresabschluss YYYY [h]" columns.
+ */
+export function parseKostenverfolgung(sheet) {
+  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null, raw: true })
+
+  // header row = first row that contains a "Jan" cell
+  let hidx = rows.findIndex((r) => r.some((c) => typeof c === 'string' && c.trim() === 'Jan'))
+  if (hidx < 0) hidx = 7
+  const hdr = rows[hidx] || []
+
+  // detect the yearly hour columns: header text contains "[h]" + a 4-digit year
+  const yearCols = []
+  hdr.forEach((c, j) => {
+    const s = c == null ? '' : String(c).replace(/\s+/g, ' ')
+    if (s.includes('[h]')) {
+      const m = s.match(/20\d{2}/)
+      if (m) yearCols.push({ col: j, year: m[0] })
+    }
+  })
+
+  const positions = []
   const seen = new Set()
   let inSection = false
   let currentGroup = ''
@@ -94,59 +112,56 @@ export function parsePersonalkosten(wb) {
     if (!inSection) continue
     if (key.startsWith('materialkosten')) break
     if (!label || label === '-') continue
-    // Section header row: has a non-numeric "Kalkulation" rate cell.
-    if (typeof rate !== 'number') {
-      if (!key.startsWith('summe') && !key.startsWith('gesamtsumme')) currentGroup = label
+    if (key.startsWith('summe') || key.startsWith('gesamtsumme')) continue
+    // group header row → rate cell reads "Kalkulation …"
+    const rateStr = typeof rate === 'string' ? rate.toLowerCase() : ''
+    if (rateStr.includes('kalkulation')) {
+      currentGroup = label
       continue
     }
-    if (rate <= 0) continue // placeholder rows
-    if (key.startsWith('summe')) continue
+    // blank rate (non-Summe) → structural filler, skip
+    if (rate == null || rate === '') continue
+    // numeric placeholder 0 → skip; everything else (numeric >0 or unit like
+    // "1 LE") is a position, per the "take all other column-B entries" rule
+    if (typeof rate === 'number' && rate <= 0) continue
     if (seen.has(label)) continue
     seen.add(label)
-    out.push({ workGroup: currentGroup || 'Personal', position: label })
+
+    const hoursByPeriod = {}
+    for (const { col, year } of yearCols) hoursByPeriod[year] = num(r[col])
+    positions.push({
+      workGroup: currentGroup || 'Personal',
+      position: label,
+      hoursByPeriod,
+      totalHours: Object.values(hoursByPeriod).reduce((a, b) => a + b, 0),
+    })
   }
-  return out
+
+  // keep only years that actually carry data (across any position);
+  // fall back to the first three detected years if the sheet is still empty.
+  let periods = yearCols
+    .map((y) => y.year)
+    .filter((y) => positions.some((p) => (p.hoursByPeriod[y] || 0) > 0))
+  if (!periods.length) periods = yearCols.slice(0, 3).map((y) => y.year)
+
+  for (const p of positions) {
+    const hb = {}
+    for (const y of periods) hb[y] = p.hoursByPeriod[y] || 0
+    p.hoursByPeriod = hb
+    p.totalHours = Object.values(hb).reduce((a, b) => a + b, 0)
+  }
+
+  return { positions, periods }
 }
 
-function parseEkas(sheet) {
-  const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null, raw: true })
-  // Layout (0-indexed cols): B=Fachbereich(1) C=Umfang(2) D=Std'22(3) G=Std'23(6) J=Std'24(9)
-  // Detect the year header cells to be robust to shifts.
-  let yearCols = { 3: null, 6: null, 9: null }
-  for (const r of rows.slice(0, 8)) {
-    r.forEach((cell, idx) => {
-      if (isYear(cell) && yearCols[idx] === null && [3, 6, 9].includes(idx)) {
-        yearCols[idx] = String(cell)
-      }
-    })
-  }
-  // Fallback labels if header detection failed.
-  const periodFor = { 3: yearCols[3] || '2022', 6: yearCols[6] || '2023', 9: yearCols[9] || '2024' }
-  const periods = [periodFor[3], periodFor[6], periodFor[9]]
-
-  const positions = []
-  let currentGroup = ''
-  for (const r of rows) {
-    const fb = clean(r[1])
-    const umfang = clean(r[2])
-    if (fb) currentGroup = fb
-    const key = umfang.toLowerCase()
-    if (!umfang || SKIP_POSITIONS.has(key) || umfang.includes('VW386') || key.startsWith('zwischensumme')) continue
-    const hoursByPeriod = {
-      [periodFor[3]]: num(r[3]),
-      [periodFor[6]]: num(r[6]),
-      [periodFor[9]]: num(r[9]),
-    }
-    const totalHours = Object.values(hoursByPeriod).reduce((a, b) => a + b, 0)
-    if (totalHours <= 0) continue
-    positions.push({
-      workGroup: currentGroup || 'Allgemein',
-      position: umfang,
-      hoursByPeriod,
-      totalHours,
-    })
-  }
-  return { positions, periods: periods.filter((p, i, a) => a.indexOf(p) === i) }
+/** Back-compat: list of { workGroup, position } from the Kostenverfolgung sheet. */
+export function parsePersonalkosten(wb) {
+  const sheetName = findKostenverfolgungSheet(wb)
+  if (!sheetName) return []
+  return parseKostenverfolgung(wb.Sheets[sheetName]).positions.map((p) => ({
+    workGroup: p.workGroup,
+    position: p.position,
+  }))
 }
 
 function parseGeneric(sheet) {

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { monthlyHeadcount, monthlyCapacityHours } from '../lib/resource.js'
+import { monthlyHeadcountForYear, monthlyCapacityHoursForYear, capacityYears } from '../lib/resource.js'
 import { fmt } from '../lib/util.js'
 import { actions, useStore } from '../store.js'
 import Modal from './Modal.jsx'
@@ -7,12 +7,21 @@ import { IconPlus, IconTrash } from './icons.jsx'
 
 const MONTHS = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez']
 
-export default function PositionCapacity({ headcount, settings }) {
+export default function PositionCapacity({ projects, headcount, settings }) {
   const positions = useStore((s) => s.capacityPositions)
   const [addOpen, setAddOpen] = useState(false)
   const [form, setForm] = useState({ workGroup: '', position: '', people: 5 })
-  const totalsPersons = monthlyHeadcount(headcount)
-  const totalsHours = monthlyCapacityHours(headcount, settings)
+
+  // available years come from the project timeline; keep a selected one
+  const years = useMemo(() => {
+    const ys = capacityYears(projects)
+    return ys.length ? ys : [String(new Date().getFullYear())]
+  }, [projects])
+  const [year, setYear] = useState(years[0])
+  const activeYear = years.includes(year) ? year : years[0]
+
+  const totalsPersons = monthlyHeadcountForYear(headcount, activeYear)
+  const totalsHours = monthlyCapacityHoursForYear(headcount, settings, activeYear)
 
   const existingGroups = useMemo(
     () => [...new Set(positions.map((p) => p.workGroup))],
@@ -29,38 +38,36 @@ export default function PositionCapacity({ headcount, settings }) {
     setAddOpen(false)
   }
 
-  // group positions by work group for readable section headers
+  // group positions by work group (unique group names, merges HiSi/VoSi)
   const groups = useMemo(() => {
-    const g = []
-    let cur = null
+    const map = new Map()
     for (const p of positions) {
-      if (!cur || cur.name !== p.workGroup) {
-        cur = { name: p.workGroup, items: [] }
-        g.push(cur)
-      }
-      cur.items.push(p)
+      if (!map.has(p.workGroup)) map.set(p.workGroup, { name: p.workGroup, items: [] })
+      map.get(p.workGroup).items.push(p)
     }
-    return g
+    return [...map.values()]
   }, [positions])
 
   const setCell = (pos, m, val) => {
-    const n = val === '' ? 0 : Math.max(0, Number(val) || 0)
-    actions.setHeadcountMonth(pos, m, n)
+    actions.setHeadcountMonth(pos, activeYear, m, val)
   }
   const fillRow = (pos) => {
-    const first = (headcount[pos] && headcount[pos][0]) || 0
-    actions.setHeadcountRow(pos, Array(12).fill(first))
+    const first = headcount[pos]?.[activeYear]?.[0] || 0
+    actions.setHeadcountRow(pos, activeYear, Array(12).fill(first))
   }
 
   return (
     <div className="card p-5">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-2">
         <div>
-          <h2 className="text-lg font-bold text-ink-900">Personalkapazität je Position (monatlich)</h2>
+          <h2 className="text-lg font-bold text-ink-900">
+            Personalkapazität je Position ·{' '}
+            <span className="text-brand-600">Jahr {activeYear}</span>
+          </h2>
           <p className="text-sm text-ink-500">
-            Standardliste der Positionen aus dem Bereich <strong>Personalkosten</strong> (direkt aus
-            den Referenz-Excels). Standardbelegung: 5 Personen/Monat. Passen Sie die verfügbare
-            Personenzahl je Monat an – die Summe erscheint als Kapazitätslinie im Diagramm.
+            Positionen aus dem Bereich <strong>Personalkosten</strong> (Kostenverfolgung). Verfügbare
+            Personenzahl <strong>je Jahr und Monat</strong>. Die Summe ergibt die
+            Kapazitätslinie im Diagramm (jahr-spezifisch).
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -69,6 +76,28 @@ export default function PositionCapacity({ headcount, settings }) {
             <IconPlus width={14} height={14} /> Position
           </button>
         </div>
+      </div>
+
+      {/* year selector */}
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <span className="text-xs font-semibold uppercase tracking-wide text-ink-400">Jahr</span>
+        <div className="inline-flex rounded-lg border border-ink-300 p-0.5">
+          {years.map((y) => (
+            <button
+              key={y}
+              onClick={() => setYear(y)}
+              className={`tnum rounded-md px-3 py-1 text-sm font-semibold transition-colors ${
+                y === activeYear ? 'bg-brand-600 text-white' : 'text-ink-600 hover:bg-ink-100'
+              }`}
+            >
+              {y}
+            </button>
+          ))}
+        </div>
+        <span className="ml-1 text-xs text-ink-400">
+          Ø {fmt(totalsPersons.reduce((a, b) => a + b, 0) / 12, 1)} Personen ·{' '}
+          {fmt(totalsHours.reduce((a, b) => a + b, 0))} Std im Jahr {activeYear}
+        </span>
       </div>
 
       {positions.length === 0 ? (
@@ -100,6 +129,7 @@ export default function PositionCapacity({ headcount, settings }) {
                   key={g.name}
                   group={g}
                   headcount={headcount}
+                  year={activeYear}
                   setCell={setCell}
                   fillRow={fillRow}
                   onRemove={(pos) => actions.removeCapacityPosition(pos)}
@@ -196,11 +226,11 @@ export default function PositionCapacity({ headcount, settings }) {
   )
 }
 
-function FragmentGroup({ group, headcount, setCell, fillRow, onRemove }) {
+function FragmentGroup({ group, headcount, year, setCell, fillRow, onRemove }) {
   // group-level info: sum of persons per month across the group's positions
   const groupTotals = Array(12).fill(0)
   for (const p of group.items) {
-    const r = headcount[p.position] || []
+    const r = headcount[p.position]?.[year] || []
     for (let m = 0; m < 12; m++) groupTotals[m] += Number(r[m]) || 0
   }
   return (
@@ -217,7 +247,7 @@ function FragmentGroup({ group, headcount, setCell, fillRow, onRemove }) {
         <td className="bg-ink-50" />
       </tr>
       {group.items.map((p) => {
-        const row = headcount[p.position] || []
+        const row = headcount[p.position]?.[year] || []
         return (
           <tr key={p.position} className="border-t border-ink-100 hover:bg-ink-50/50">
             <td

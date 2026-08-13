@@ -6,10 +6,14 @@ import { uid } from './util.js'
 // This drives the capacity page independently of any Excel upload.
 export const STANDARD_POSITIONS = standardPositions
 
-// Default head-count: every position staffed with a standard 5 people per month.
-export function defaultHeadcount(people = 5) {
+// Default head-count per year: every position staffed with `people` per month,
+// for each given year. Shape: { [position]: { [year]: number[12] } }.
+export function defaultHeadcount(years, people = 5) {
   const hc = {}
-  for (const p of STANDARD_POSITIONS) hc[p.position] = Array(12).fill(people)
+  for (const p of STANDARD_POSITIONS) {
+    hc[p.position] = {}
+    for (const y of years) hc[p.position][y] = Array(12).fill(people)
+  }
   return hc
 }
 
@@ -63,8 +67,12 @@ export function buildSeed() {
     },
   ]
 
-  // Standard: every Personalkosten position staffed with 5 people per month.
-  const headcount = defaultHeadcount(5)
+  // Standard: every Personalkosten position staffed with 5 people per month,
+  // for every year that appears on the timeline.
+  const years = [
+    ...new Set(projects.flatMap((p) => p.subProjects.flatMap((sp) => sp.periods || []))),
+  ].sort()
+  const headcount = defaultHeadcount(years, 5)
   const capacityPositions = STANDARD_POSITIONS.map((p) => ({ ...p }))
 
   return {
