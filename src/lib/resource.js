@@ -192,6 +192,49 @@ export function workGroupBreakdown(projects, capacity, settings, { onlyAwarded =
   })
 }
 
+/**
+ * Position usage within ONE project, split by sub-project (for the analysis
+ * tab). Same role appearing in several sub-projects is combined into one row
+ * with a per-sub-project breakdown, so the longest bar = most-used position.
+ * Returns rows [{ position, workGroup, total, bySub: { [subName]: hours } }]
+ * sorted by total descending.
+ */
+export function projectPositionBreakdown(project) {
+  const map = new Map()
+  for (const sp of project.subProjects) {
+    for (const pos of sp.positions) {
+      const h = pos.totalHours || Object.values(pos.hoursByPeriod || {}).reduce((a, b) => a + b, 0)
+      if (!h) continue
+      const cur = map.get(pos.position) || {
+        position: pos.position,
+        workGroup: pos.workGroup,
+        total: 0,
+        bySub: {},
+      }
+      cur.bySub[sp.name] = (cur.bySub[sp.name] || 0) + h
+      cur.total += h
+      map.set(pos.position, cur)
+    }
+  }
+  return [...map.values()].sort((a, b) => b.total - a.total)
+}
+
+/**
+ * Position usage within ONE sub-project. Returns rows [{ position, workGroup,
+ * hours }] sorted by hours descending.
+ */
+export function subPositionBreakdown(sub) {
+  const map = new Map()
+  for (const pos of sub.positions) {
+    const h = pos.totalHours || Object.values(pos.hoursByPeriod || {}).reduce((a, b) => a + b, 0)
+    if (!h) continue
+    const cur = map.get(pos.position) || { position: pos.position, workGroup: pos.workGroup, hours: 0 }
+    cur.hours += h
+    map.set(pos.position, cur)
+  }
+  return [...map.values()].sort((a, b) => b.hours - a.hours)
+}
+
 export function portfolioTotals(projects) {
   const awarded = projects.filter((p) => p.status === 'awarded')
   const planned = projects.filter((p) => p.status === 'planned')

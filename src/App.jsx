@@ -10,6 +10,7 @@ import { fmt } from './lib/util.js'
 import ResourceMountChart from './components/ResourceMountChart.jsx'
 import PositionCapacity from './components/PositionCapacity.jsx'
 import ProjectData from './components/ProjectData.jsx'
+import PositionAnalysis from './components/PositionAnalysis.jsx'
 import { IconLayers, IconChart, IconUsers, IconFile } from './components/icons.jsx'
 
 function Stat({ icon, label, value, sub, tone = 'brand' }) {
@@ -97,6 +98,13 @@ export default function App() {
               Projektdaten
             </NavTab>
             <NavTab
+              active={view === 'analysis'}
+              onClick={() => setView('analysis')}
+              icon={<IconChart width={16} height={16} />}
+            >
+              Positionsanalyse
+            </NavTab>
+            <NavTab
               active={view === 'capacity'}
               onClick={() => setView('capacity')}
               icon={<IconUsers width={16} height={16} />}
@@ -181,6 +189,8 @@ export default function App() {
           </>
         ) : view === 'data' ? (
           <ProjectData projects={projects} />
+        ) : view === 'analysis' ? (
+          <PositionAnalysis projects={projects} />
         ) : (
           <>
             <div className="mb-5 grid grid-cols-2 gap-4 lg:grid-cols-3">
