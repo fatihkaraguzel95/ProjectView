@@ -52,6 +52,7 @@ export default function App() {
   const projects = useStore((s) => s.projects)
   const headcount = useStore((s) => s.headcount)
   const settings = useStore((s) => s.settings)
+  const source = useStore((s) => s._source)
   const t = portfolioTotals(projects)
 
   // capacity KPIs averaged across all years on the timeline
@@ -103,7 +104,37 @@ export default function App() {
               Personalkapazität
             </NavTab>
           </nav>
-          <span className="ml-auto chip bg-ink-100 text-ink-500">Prototyp</span>
+          <span
+            className={`ml-auto chip ${
+              source === 'supabase'
+                ? 'bg-green-50 text-green-700'
+                : source === 'local'
+                  ? 'bg-amber-50 text-amber-700'
+                  : 'bg-ink-100 text-ink-500'
+            }`}
+            title={
+              source === 'supabase'
+                ? 'Alle Daten laufen live über Supabase'
+                : source === 'local'
+                  ? 'Keine Supabase-Verbindung – lokaler Fallback (Änderungen werden nicht gespeichert)'
+                  : 'Verbinde mit Supabase…'
+            }
+          >
+            <span
+              className={`inline-block h-2 w-2 rounded-full ${
+                source === 'supabase'
+                  ? 'bg-green-500'
+                  : source === 'local'
+                    ? 'bg-amber-500'
+                    : 'bg-ink-400'
+              }`}
+            />
+            {source === 'supabase'
+              ? 'Supabase · live'
+              : source === 'local'
+                ? 'Lokal (offline)'
+                : 'Verbinde…'}
+          </span>
           <button
             className="btn-ghost text-xs"
             onClick={() => {

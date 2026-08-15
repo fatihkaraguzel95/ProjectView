@@ -69,6 +69,22 @@ export function projectHoursByPeriod(project) {
   return out
 }
 
+// Monthly hours for a project: { [year]: number[12] }, summed over all
+// sub-projects & positions (uses the real monthly Excel data).
+export function projectMonthlyHours(project) {
+  const out = {}
+  for (const sp of project.subProjects) {
+    for (const pos of sp.positions) {
+      const months = pos.months || {}
+      for (const [year, arr] of Object.entries(months)) {
+        if (!out[year]) out[year] = Array(12).fill(0)
+        for (let m = 0; m < 12; m++) out[year][m] += Number(arr[m]) || 0
+      }
+    }
+  }
+  return out
+}
+
 export function projectTotalHours(project) {
   return project.subProjects.reduce(
     (a, sp) => a + sp.positions.reduce((b, p) => b + (p.totalHours || 0), 0),
@@ -103,6 +119,31 @@ export function mountChartData(projects, { visibleIds } = {}) {
     color: p.color,
     status: p.status,
   }))
+  return { data, series, periods }
+}
+
+/**
+ * Monthly stacked-area data for the Resource Mount Chart, using the real
+ * per-month Excel values. Returns { data: [{year,m,...projId}], series, periods }.
+ */
+export function mountMonthlyData(projects) {
+  const periods = allPeriods(projects)
+  const ordered = [
+    ...projects.filter((p) => p.status === 'awarded'),
+    ...projects.filter((p) => p.status === 'planned'),
+  ]
+  const perProject = ordered.map((p) => ({ p, months: projectMonthlyHours(p) }))
+  const data = []
+  for (const year of periods) {
+    for (let m = 0; m < 12; m++) {
+      const row = { year, m }
+      for (const { p, months } of perProject) {
+        row[p.id] = Math.round((months[year] && months[year][m]) || 0)
+      }
+      data.push(row)
+    }
+  }
+  const series = ordered.map((p) => ({ id: p.id, name: p.name, color: p.color, status: p.status }))
   return { data, series, periods }
 }
 

@@ -11,6 +11,31 @@ import * as XLSX from 'xlsx'
  *   2. Generic     — any sheet with a header row containing period tokens (years/months)
  */
 
+// Canonical position name: strips HiSi/VoSi qualifiers, fixes the "Kontrukteur"
+// typo and cost-centre suffixes ("_CU210"), so HiSi/VoSi variants collapse to
+// one shared position (e.g. "Koordination BTV HiSi" + "… Vosi" -> "Koordination BTV").
+export function canonicalPosition(name) {
+  let s = String(name).trim().replace(/Kontrukteur/gi, 'Konstrukteur')
+  s = s.replace(/\b(hisi|vosi)\b/gi, '').replace(/_[A-Za-z]{1,4}\d+/g, '')
+  s = s
+    .replace(/\s*:\s*/g, ' ')
+    .replace(/\s+([,.])/g, '$1')
+    .replace(/-\s*$/, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+  return s
+}
+
+// Match key for grouping variants of the same role.
+export function positionKey(name) {
+  return String(name)
+    .toLowerCase()
+    .replace(/kontrukteur/g, 'konstrukteur')
+    .replace(/\b(hisi|vosi)\b/g, '')
+    .replace(/_[a-z]{1,4}\d+/g, '')
+    .replace(/[^a-z0-9äöüß]/g, '')
+}
+
 const SKIP_POSITIONS = new Set([
   'summe',
   'zwischensumme:',
@@ -79,26 +104,53 @@ function findKostenverfolgungSheet(wb) {
  * MATERIALKOSTEN block are skipped.
  * Yearly hours are read from the "Jahresabschluss YYYY [h]" columns.
  */
+// Compact a header cell for matching: lowercase and strip spaces, dashes and
+// the \r\n line breaks used inside "Jahres-\r\nabschluss\r\n2024\r\n[h]",
+// yielding e.g. "jahresabschluss2024[h]". Keeps [ ] € for unit detection.
+const compactHdr = (v) => (v == null ? '' : String(v).toLowerCase().replace(/[\s-]+/g, ''))
+const isYearHoursHeader = (v) => {
+  const s = compactHdr(v)
+  return s.includes('jahresabschluss') && s.includes('[h]') && /20\d{2}/.test(s)
+}
+
 export function parseKostenverfolgung(sheet) {
   const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null, raw: true })
 
-  // header row = first row that contains a "Jan" cell
-  let hidx = rows.findIndex((r) => r.some((c) => typeof c === 'string' && c.trim() === 'Jan'))
+  // Header row = the row carrying the "Jahresabschluss YYYY [h]" year totals.
+  // Fall back to the first row with a "Jan" cell, then to the fixed row 7.
+  let hidx = rows.findIndex((r) => r.some(isYearHoursHeader))
+  if (hidx < 0) hidx = rows.findIndex((r) => r.some((c) => typeof c === 'string' && c.trim() === 'Jan'))
   if (hidx < 0) hidx = 7
   const hdr = rows[hidx] || []
 
-  // detect the yearly hour columns: header text contains "[h]" + a 4-digit year
+  // Yearly HOURS columns = "Jahresabschluss YYYY [h]". The layout repeats
+  // [12 months][YYYY h][YYYY €] per year, so we must pick the [h] column and
+  // never the [€] cost column. This spans every year present in the template
+  // (2022–2029 in the VW files) — any future year is detected automatically.
+  // Fallback: if a template drops the unit tag, take the FIRST "Jahresabschluss
+  // YYYY" column per year (hours precede cost in the layout).
   const yearCols = []
+  const seenYear = new Set()
   hdr.forEach((c, j) => {
-    const s = c == null ? '' : String(c).replace(/\s+/g, ' ')
-    if (s.includes('[h]')) {
-      const m = s.match(/20\d{2}/)
-      if (m) yearCols.push({ col: j, year: m[0] })
+    const s = compactHdr(c)
+    const ym = s.match(/20\d{2}/)
+    if (!ym) return
+    const year = ym[0]
+    const isJA = s.includes('jahresabschluss')
+    const isHours = s.includes('[h]') || s.includes('[std]')
+    const isCost = s.includes('[€]') || s.includes('[eur]')
+    if (isJA && isHours) {
+      yearCols.push({ col: j, year })
+      seenYear.add(year)
+    } else if (isJA && !isCost && !seenYear.has(year)) {
+      yearCols.push({ col: j, year })
+      seenYear.add(year)
     }
   })
+  yearCols.sort((a, b) => a.col - b.col)
 
   const positions = []
-  const seen = new Set()
+  const byLabel = new Map() // label -> position (to merge a role listed twice)
   let inSection = false
   let currentGroup = ''
   for (const r of rows) {
@@ -124,31 +176,52 @@ export function parseKostenverfolgung(sheet) {
     // numeric placeholder 0 → skip; everything else (numeric >0 or unit like
     // "1 LE") is a position, per the "take all other column-B entries" rule
     if (typeof rate === 'number' && rate <= 0) continue
-    if (seen.has(label)) continue
-    seen.add(label)
 
-    const hoursByPeriod = {}
-    for (const { col, year } of yearCols) hoursByPeriod[year] = num(r[col])
-    positions.push({
-      workGroup: currentGroup || 'Personal',
-      position: label,
-      hoursByPeriod,
-      totalHours: Object.values(hoursByPeriod).reduce((a, b) => a + b, 0),
-    })
+    // this row's monthly hours per detected year (12 columns before each "[h]")
+    const rowMonths = {}
+    for (const { col, year } of yearCols) {
+      if (col < 12) continue
+      const arr = []
+      for (let m = 0; m < 12; m++) arr.push(num(r[col - 12 + m]))
+      const mSum = arr.reduce((a, b) => a + b, 0)
+      const yTotal = num(r[col])
+      // if only a yearly total is given (no monthly split), spread it evenly so
+      // the hours are never lost — months stay the single source of truth.
+      rowMonths[year] = mSum === 0 && yTotal > 0 ? Array(12).fill(yTotal / 12) : arr
+    }
+
+    const existing = byLabel.get(label)
+    if (existing) {
+      // same role appears twice → merge month-by-month instead of dropping it
+      for (const [year, arr] of Object.entries(rowMonths)) {
+        const cur = existing.months[year] || Array(12).fill(0)
+        existing.months[year] = cur.map((v, i) => v + (arr[i] || 0))
+      }
+      continue
+    }
+    const pos = { workGroup: currentGroup || 'Personal', position: label, months: rowMonths }
+    byLabel.set(label, pos)
+    positions.push(pos)
   }
 
-  // keep only years that actually carry data (across any position);
+  // keep only years that actually carry hours (across any position);
   // fall back to the first three detected years if the sheet is still empty.
-  let periods = yearCols
-    .map((y) => y.year)
-    .filter((y) => positions.some((p) => (p.hoursByPeriod[y] || 0) > 0))
+  const yearHasData = (y) => positions.some((p) => (p.months[y] || []).some((v) => v > 0))
+  let periods = yearCols.map((y) => y.year).filter(yearHasData)
   if (!periods.length) periods = yearCols.slice(0, 3).map((y) => y.year)
 
+  // restrict each position to the kept periods; derive yearly totals from months
   for (const p of positions) {
-    const hb = {}
-    for (const y of periods) hb[y] = p.hoursByPeriod[y] || 0
-    p.hoursByPeriod = hb
-    p.totalHours = Object.values(hb).reduce((a, b) => a + b, 0)
+    const months = {}
+    const hoursByPeriod = {}
+    for (const y of periods) {
+      const arr = p.months[y] || Array(12).fill(0)
+      months[y] = arr
+      hoursByPeriod[y] = arr.reduce((a, b) => a + b, 0)
+    }
+    p.months = months
+    p.hoursByPeriod = hoursByPeriod
+    p.totalHours = Object.values(hoursByPeriod).reduce((a, b) => a + b, 0)
   }
 
   return { positions, periods }

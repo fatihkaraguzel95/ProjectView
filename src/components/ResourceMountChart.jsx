@@ -8,48 +8,92 @@ import {
   CartesianGrid,
   Tooltip,
   ReferenceLine,
+  Brush,
   ResponsiveContainer,
 } from 'recharts'
-import { mountChartData, monthlyCapacityHoursForYear } from '../lib/resource.js'
+import { mountMonthlyData, monthlyCapacityHoursForYear } from '../lib/resource.js'
 import { fmt } from '../lib/util.js'
+import { IconX } from './icons.jsx'
 
 const MONTHS = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez']
 
-function CustomTooltip({ active, payload, label, unit, series }) {
+function CustomTooltip({ active, payload, label, unit, breakdownByKey, grain }) {
   if (!active || !payload?.length) return null
-  const rows = payload.filter(
-    (p) => p.dataKey !== '__total' && p.dataKey !== '__cap' && p.value > 0,
-  )
   const total = payload.find((p) => p.dataKey === '__total')?.value ?? 0
   const cap = payload.find((p) => p.dataKey === '__cap')?.value ?? 0
   const overCap = cap > 0 && total > cap
+
+  // full demand breakdown for the hovered period: project → sub-project → positions
+  const row = payload[0]?.payload
+  const key = row ? (grain === 'year' ? String(row.year) : `${row.year}-${row.m}`) : null
+  const groups = (key && breakdownByKey?.get(key)) || []
+
   return (
-    <div className="rounded-lg border border-ink-200 bg-white p-3 text-xs shadow-pop">
+    <div className="w-72 rounded-lg border border-ink-200 bg-white p-3 text-xs shadow-pop">
       <div className="mb-2 font-bold text-ink-900">{label}</div>
-      <div className="space-y-1">
-        {rows.map((p) => {
-          const s = series.find((x) => x.id === p.dataKey)
-          return (
-            <div key={p.dataKey} className="flex items-center gap-2">
+
+      <div className="max-h-80 space-y-2 overflow-y-auto pr-1">
+        {groups.map((g) => (
+          <div key={g.id}>
+            {/* project header */}
+            <div className="flex items-center gap-2">
               <span
-                className="inline-block h-2.5 w-2.5 rounded-sm"
+                className="inline-block h-2.5 w-2.5 shrink-0 rounded-sm"
                 style={{
-                  background: s?.color,
+                  background: g.color,
                   backgroundImage:
-                    s?.status === 'planned'
-                      ? `repeating-linear-gradient(45deg, ${s.color} 0 2px, transparent 2px 4px)`
+                    g.status === 'planned'
+                      ? `repeating-linear-gradient(45deg, ${g.color} 0 2px, transparent 2px 4px)`
                       : undefined,
                 }}
               />
-              <span className="flex-1 text-ink-600">
-                {s?.name}
-                {s?.status === 'planned' && <span className="text-ink-400"> (geplant)</span>}
+              <span className="min-w-0 flex-1 truncate font-semibold text-ink-800" title={g.name}>
+                {g.name}
+                {g.status === 'planned' && <span className="text-ink-400"> (geplant)</span>}
               </span>
-              <span className="tnum font-semibold text-ink-900">{fmt(p.value)}</span>
+              <span className="tnum shrink-0 font-bold text-ink-900">{fmt(g.hours)}</span>
             </div>
-          )
-        })}
+
+            {/* sub-projects, each with its own positions */}
+            <div className="ml-1 mt-1 space-y-1.5 border-l border-ink-100 pl-2">
+              {g.subs.map((s) => (
+                <div key={s.name}>
+                  {g.subs.length > 1 && (
+                    <div className="flex items-center gap-2 font-semibold text-ink-600">
+                      <span className="min-w-0 flex-1 truncate" title={s.name}>
+                        {s.name}
+                      </span>
+                      <span className="tnum shrink-0">{fmt(s.hours)}</span>
+                    </div>
+                  )}
+                  <div className="space-y-0.5">
+                    {s.positions.slice(0, 6).map((p) => (
+                      <div key={p.position} className="flex items-center gap-2">
+                        <span
+                          className="min-w-0 flex-1 truncate text-ink-500"
+                          title={p.position}
+                        >
+                          {p.position}
+                        </span>
+                        <span className="tnum shrink-0 text-ink-700">{fmt(p.hours)}</span>
+                      </div>
+                    ))}
+                    {s.positions.length > 6 && (
+                      <div className="flex items-center gap-2 text-ink-400">
+                        <span className="flex-1">+ {s.positions.length - 6} weitere</span>
+                        <span className="tnum shrink-0">
+                          {fmt(s.positions.slice(6).reduce((a, p) => a + p.hours, 0))}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
       </div>
+
       <div className="mt-2 flex items-center justify-between border-t border-ink-100 pt-2">
         <span className="font-semibold text-ink-700">Gesamtbedarf</span>
         <span className={`tnum font-bold ${overCap ? 'text-red-600' : 'text-ink-900'}`}>
@@ -72,14 +116,16 @@ function CustomTooltip({ active, payload, label, unit, series }) {
 export default function ResourceMountChart({ projects, headcount, settings }) {
   const [hidden, setHidden] = useState(() => new Set())
   const [unit, setUnit] = useState('h') // 'h' | 'fte'
+  const [grain, setGrain] = useState('month') // 'month' | 'year' — time scale
+  const [pinned, setPinned] = useState(null) // clicked period row, kept on screen
   const hoursPerFTE = settings?.hoursPerFTEPerYear || 1600
 
-  const { data, series } = useMemo(() => mountChartData(projects), [projects])
+  const { data, series } = useMemo(() => mountMonthlyData(projects), [projects])
   const divisor = unit === 'fte' ? hoursPerFTE : 1
 
   // capacity per (year, month) in hours — the head-count grid is year-specific
   const capByYear = useMemo(() => {
-    const years = [...new Set(data.map((r) => String(r.period)))]
+    const years = [...new Set(data.map((r) => String(r.year)))]
     const map = {}
     for (const y of years) map[y] = monthlyCapacityHoursForYear(headcount, settings, y)
     return map
@@ -87,9 +133,18 @@ export default function ResourceMountChart({ projects, headcount, settings }) {
   const hasCapacity = Object.values(capByYear).some((v) => v.some((x) => x > 0))
 
   const visibleSeries = series.filter((s) => !hidden.has(s.id))
-  const yearlyDisplay = useMemo(() => {
+
+  // Real monthly demand rows straight from the Excel data.
+  const monthlyData = useMemo(() => {
     return data.map((row) => {
-      const out = { period: row.period }
+      const y = String(row.year)
+      const cap = capByYear[y] || []
+      const out = {
+        label: `${MONTHS[row.m]} ${y.slice(-2)}`,
+        year: y,
+        m: row.m,
+        isYearStart: row.m === 0,
+      }
       let total = 0
       for (const s of series) {
         const v = hidden.has(s.id) ? 0 : (row[s.id] || 0) / divisor
@@ -97,29 +152,96 @@ export default function ResourceMountChart({ projects, headcount, settings }) {
         if (!hidden.has(s.id)) total += v
       }
       out.__total = total
+      out.__cap = (cap[row.m] || 0) / divisor
       return out
     })
-  }, [data, series, hidden, divisor])
+  }, [data, series, hidden, divisor, capByYear])
 
-  // Break each yearly period into 12 monthly buckets; overlay that year's
-  // monthly capacity so the capacity line varies by year and month.
-  const monthlyData = useMemo(() => {
-    const sorted = [...yearlyDisplay].sort((a, b) => String(a.period).localeCompare(String(b.period)))
-    const rows = []
-    for (const row of sorted) {
-      const y = String(row.period)
-      const yy = y.slice(-2)
-      const cap = capByYear[y] || []
-      for (let m = 0; m < 12; m++) {
-        const out = { label: `${MONTHS[m]} ${yy}`, year: y, m, isYearStart: m === 0 }
-        for (const s of series) out[s.id] = (row[s.id] || 0) / 12
-        out.__total = (row.__total || 0) / 12
-        out.__cap = (cap[m] || 0) / divisor
-        rows.push(out)
+  // Yearly roll-up: sum each project's 12 months into one bar per year. Reuses
+  // monthlyData so hidden series / unit conversion are already applied.
+  const yearlyData = useMemo(() => {
+    const byYear = new Map()
+    for (const row of monthlyData) {
+      let acc = byYear.get(row.year)
+      if (!acc) {
+        acc = { label: row.year, year: row.year, isYearStart: false, __total: 0, __cap: 0 }
+        for (const s of series) acc[s.id] = 0
+        byYear.set(row.year, acc)
+      }
+      for (const s of series) acc[s.id] += row[s.id] || 0
+      acc.__total += row.__total
+      acc.__cap += row.__cap
+    }
+    return [...byYear.values()]
+  }, [monthlyData, series])
+
+  const chartData = grain === 'year' ? yearlyData : monthlyData
+
+  // Per-period demand broken down by project → sub-project → position (which
+  // roles & how much). Keyed by year (yearly) or `${year}-${m}`. Only visible
+  // projects; hours already divided by the active unit.
+  const breakdownByKey = useMemo(() => {
+    // key -> Map(projectId -> { project, subs: Map(subName -> Map(position -> hours)) })
+    const acc = new Map()
+    const bump = (key, project, subName, position, val) => {
+      let byProj = acc.get(key)
+      if (!byProj) {
+        byProj = new Map()
+        acc.set(key, byProj)
+      }
+      let g = byProj.get(project.id)
+      if (!g) {
+        g = { project, subs: new Map() }
+        byProj.set(project.id, g)
+      }
+      let sub = g.subs.get(subName)
+      if (!sub) {
+        sub = new Map()
+        g.subs.set(subName, sub)
+      }
+      sub.set(position, (sub.get(position) || 0) + val)
+    }
+    for (const p of projects) {
+      if (hidden.has(p.id)) continue
+      for (const sp of p.subProjects || []) {
+        for (const pos of sp.positions || []) {
+          for (const [year, arr] of Object.entries(pos.months || {})) {
+            for (let mo = 0; mo < 12; mo++) {
+              const v = Number(arr[mo]) || 0
+              if (!v) continue
+              bump(grain === 'year' ? String(year) : `${year}-${mo}`, p, sp.name, pos.position, v)
+            }
+          }
+        }
       }
     }
-    return rows
-  }, [yearlyDisplay, series, capByYear, divisor])
+    // shape into sorted, unit-scaled arrays
+    const out = new Map()
+    for (const [key, byProj] of acc) {
+      const groups = [...byProj.values()]
+        .map(({ project, subs }) => {
+          const subArr = [...subs.entries()]
+            .map(([name, posMap]) => {
+              const positions = [...posMap.entries()]
+                .map(([position, h]) => ({ position, hours: h / divisor }))
+                .sort((a, b) => b.hours - a.hours)
+              return { name, hours: positions.reduce((a, x) => a + x.hours, 0), positions }
+            })
+            .sort((a, b) => b.hours - a.hours)
+          return {
+            id: project.id,
+            name: project.name,
+            color: project.color,
+            status: project.status,
+            hours: subArr.reduce((a, s) => a + s.hours, 0),
+            subs: subArr,
+          }
+        })
+        .sort((a, b) => b.hours - a.hours)
+      out.set(key, groups)
+    }
+    return out
+  }, [projects, hidden, grain, divisor])
 
   const toggle = (id) =>
     setHidden((prev) => {
@@ -129,9 +251,9 @@ export default function ResourceMountChart({ projects, headcount, settings }) {
     })
 
   const exportCsv = () => {
-    const header = ['Monat', ...series.map((s) => s.name), 'Gesamt', 'Kapazität']
+    const header = [grain === 'year' ? 'Jahr' : 'Monat', ...series.map((s) => s.name), 'Gesamt', 'Kapazität']
     const lines = [header.join(';')]
-    for (const row of monthlyData) {
+    for (const row of chartData) {
       const vals = series.map((s) => Math.round((row[s.id] || 0) * 100) / 100)
       lines.push(
         [row.label, ...vals, Math.round(row.__total * 100) / 100, Math.round(row.__cap * 100) / 100].join(';'),
@@ -140,16 +262,30 @@ export default function ResourceMountChart({ projects, headcount, settings }) {
     const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
-    a.download = `resource-mount-${unit}.csv`
+    a.download = `resource-mount-${grain}-${unit}.csv`
     a.click()
     URL.revokeObjectURL(a.href)
   }
 
   const unitLabel = unit === 'fte' ? 'FTE' : 'Std'
+  const perLabel = grain === 'year' ? 'Jahr' : 'Monat'
   const hasData = series.length > 0 && data.some((r) => visibleSeries.some((s) => r[s.id] > 0))
-  const maxTotal = Math.max(0, ...monthlyData.map((r) => Math.max(r.__total, r.__cap)))
-  const yearStarts = monthlyData.filter((r) => r.isYearStart)
-  const peakCap = Math.max(0, ...monthlyData.map((r) => r.__cap))
+  const maxTotal = Math.max(0, ...chartData.map((r) => Math.max(r.__total, r.__cap)))
+  const yearStarts = chartData.filter((r) => r.isYearStart)
+  const peakCap = Math.max(0, ...chartData.map((r) => r.__cap))
+  // default zoom window: monthly view starts with ~2 years, then pan right
+  const brushStart = 0
+  const brushEnd =
+    grain === 'month' ? Math.min(23, Math.max(0, chartData.length - 1)) : chartData.length - 1
+
+  // pinned (clicked) period → full breakdown for the fixed detail panel
+  const pinnedKey = pinned ? (grain === 'year' ? String(pinned.year) : `${pinned.year}-${pinned.m}`) : null
+  const pinnedGroups = (pinnedKey && breakdownByKey.get(pinnedKey)) || []
+  const handleChartClick = (e) => {
+    const row = e?.activePayload?.[0]?.payload
+    if (!row) return
+    setPinned((cur) => (cur && cur.label === row.label ? null : row))
+  }
 
   return (
     <div className="card p-5">
@@ -157,11 +293,30 @@ export default function ResourceMountChart({ projects, headcount, settings }) {
         <div>
           <h2 className="text-lg font-bold text-ink-900">Resource Mount Chart</h2>
           <p className="text-sm text-ink-500">
-            Ressourcen-Bedarfsgebirge pro Monat · gestapelt nach Projekt · geplante Projekte
+            Ressourcen-Bedarfsgebirge pro {perLabel} · gestapelt nach Projekt · geplante Projekte
             schraffiert · Personal-Kapazitätslinie
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <div className="inline-flex rounded-lg border border-ink-300 p-0.5">
+            {[
+              ['month', 'Monat'],
+              ['year', 'Jahr'],
+            ].map(([g, label]) => (
+              <button
+                key={g}
+                onClick={() => {
+                  setGrain(g)
+                  setPinned(null)
+                }}
+                className={`rounded-md px-2.5 py-1 text-xs font-semibold transition-colors ${
+                  grain === g ? 'bg-brand-600 text-white' : 'text-ink-600 hover:bg-ink-100'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           <div className="inline-flex rounded-lg border border-ink-300 p-0.5">
             {['h', 'fte'].map((u) => (
               <button
@@ -182,7 +337,23 @@ export default function ResourceMountChart({ projects, headcount, settings }) {
       </div>
 
       {/* interactive legend */}
-      <div className="mb-3 mt-3 flex flex-wrap gap-2">
+      <div className="mb-3 mt-3 flex flex-wrap items-center gap-2">
+        {series.length > 1 && (
+          <div className="inline-flex rounded-lg border border-ink-200 p-0.5">
+            <button
+              onClick={() => setHidden(new Set())}
+              className="rounded-md px-2 py-1 text-xs font-semibold text-ink-600 hover:bg-ink-100"
+            >
+              Alle
+            </button>
+            <button
+              onClick={() => setHidden(new Set(series.map((s) => s.id)))}
+              className="rounded-md px-2 py-1 text-xs font-semibold text-ink-600 hover:bg-ink-100"
+            >
+              Keine
+            </button>
+          </div>
+        )}
         {series.map((s) => {
           const off = hidden.has(s.id)
           return (
@@ -210,7 +381,7 @@ export default function ResourceMountChart({ projects, headcount, settings }) {
         {hasCapacity && (
           <span className="chip ml-auto bg-accent-50 text-accent-600">
             <span className="inline-block h-0 w-4 border-t-2 border-dashed border-accent-500" />
-            Personal-Kapazität · Spitze {fmt(peakCap)} {unitLabel}/Monat
+            Personal-Kapazität · Spitze {fmt(peakCap)} {unitLabel}/{perLabel}
           </span>
         )}
       </div>
@@ -219,7 +390,12 @@ export default function ResourceMountChart({ projects, headcount, settings }) {
         <EmptyChart />
       ) : (
         <ResponsiveContainer width="100%" height={540}>
-          <ComposedChart data={monthlyData} margin={{ top: 28, right: 16, left: 4, bottom: 4 }}>
+          <ComposedChart
+            data={chartData}
+            margin={{ top: 28, right: 16, left: 4, bottom: 4 }}
+            onClick={handleChartClick}
+            style={{ cursor: 'pointer' }}
+          >
             <defs>
               {series.map((s) =>
                 s.status === 'planned' ? (
@@ -245,10 +421,10 @@ export default function ResourceMountChart({ projects, headcount, settings }) {
             <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
             <XAxis
               dataKey="label"
-              tick={{ fontSize: 10, fill: '#475569' }}
+              tick={{ fontSize: grain === 'year' ? 12 : 10, fill: '#475569' }}
               tickLine={false}
               axisLine={{ stroke: '#cbd5e1' }}
-              interval={2}
+              interval={grain === 'year' ? 0 : 'preserveStartEnd'}
               minTickGap={8}
             />
             <YAxis
@@ -267,10 +443,12 @@ export default function ResourceMountChart({ projects, headcount, settings }) {
             />
             <Tooltip
               cursor={{ stroke: '#94a3b8', strokeWidth: 1, strokeDasharray: '4 4' }}
-              content={<CustomTooltip unit={unitLabel} series={series} />}
+              content={
+                <CustomTooltip unit={unitLabel} breakdownByKey={breakdownByKey} grain={grain} />
+              }
             />
-            {/* faint year separators */}
-            {yearStarts.map((r, i) =>
+            {/* faint year separators (monthly view only) */}
+            {grain === 'month' && yearStarts.map((r, i) =>
               i === 0 ? null : (
                 <ReferenceLine
                   key={r.year}
@@ -328,8 +506,113 @@ export default function ResourceMountChart({ projects, headcount, settings }) {
                 legendType="none"
               />
             )}
+            {/* scrollable zoom window — drag the handles to scale, slide to pan years */}
+            <Brush
+              key={grain}
+              dataKey="label"
+              height={26}
+              travellerWidth={9}
+              stroke="#94a3b8"
+              fill="#f8fafc"
+              startIndex={brushStart}
+              endIndex={brushEnd}
+              tickFormatter={(v) => (grain === 'year' ? v : String(v).slice(-2))}
+            />
           </ComposedChart>
         </ResponsiveContainer>
+      )}
+
+      {/* hint + pinned full-detail panel (click a point to freeze it) */}
+      {hasData && !pinned && (
+        <p className="mt-2 text-center text-xs text-ink-400">
+          Tipp: Klicken Sie auf einen Punkt, um alle Details (Teilprojekte & Positionen) fixiert
+          anzuzeigen.
+        </p>
+      )}
+      {pinned && (
+        <div className="mt-4 rounded-xl border border-ink-200 bg-ink-50/40 p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-sm font-bold text-ink-900">Detail · {pinned.label}</h3>
+              <span className="chip bg-white text-ink-700">
+                Gesamt {fmt(pinned.__total)} {unitLabel}
+              </span>
+              {pinned.__cap > 0 && (
+                <span
+                  className={`chip ${pinned.__total > pinned.__cap ? 'bg-red-50 text-red-600' : 'bg-accent-50 text-accent-600'}`}
+                >
+                  Kapazität {fmt(pinned.__cap)} {unitLabel}
+                  {pinned.__total > pinned.__cap && ' · Überlast'}
+                </span>
+              )}
+            </div>
+            <button
+              onClick={() => setPinned(null)}
+              className="btn-ghost shrink-0 p-1 text-ink-400 hover:text-red-600"
+              title="Schließen"
+            >
+              <IconX width={16} height={16} />
+            </button>
+          </div>
+          <p className="mt-0.5 text-xs text-ink-400">
+            Fixiert per Klick · alle Teilprojekte &amp; benötigten Positionen
+          </p>
+
+          {pinnedGroups.length === 0 ? (
+            <p className="mt-3 text-sm text-ink-400">Kein Bedarf in dieser Periode.</p>
+          ) : (
+            <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {pinnedGroups.flatMap((g) =>
+                g.subs.map((s) => (
+                  <div
+                    key={`${g.id}-${s.name}`}
+                    className="rounded-lg border border-ink-200 bg-white p-3"
+                  >
+                    <div className="flex items-center gap-2 border-b border-ink-100 pb-2">
+                      <span
+                        className="inline-block h-3 w-3 shrink-0 rounded-sm"
+                        style={{
+                          background: g.color,
+                          backgroundImage:
+                            g.status === 'planned'
+                              ? `repeating-linear-gradient(45deg, ${g.color} 0 2px, transparent 2px 4px)`
+                              : undefined,
+                        }}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-[11px] font-semibold text-ink-500" title={g.name}>
+                          {g.name}
+                          {g.status === 'planned' && ' (geplant)'}
+                        </div>
+                        <div className="truncate text-sm font-bold text-ink-900" title={s.name}>
+                          {s.name}
+                        </div>
+                      </div>
+                      <span className="tnum shrink-0 text-sm font-extrabold text-brand-700">
+                        {fmt(s.hours)}
+                      </span>
+                    </div>
+                    <div className="mt-2 space-y-1">
+                      {s.positions.map((p) => (
+                        <div key={p.position} className="flex items-center gap-2 text-xs">
+                          <span
+                            className="min-w-0 flex-1 truncate text-ink-600"
+                            title={p.position}
+                          >
+                            {p.position}
+                          </span>
+                          <span className="tnum shrink-0 font-semibold text-ink-800">
+                            {fmt(p.hours)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )),
+              )}
+            </div>
+          )}
+        </div>
       )}
     </div>
   )

@@ -35,7 +35,6 @@ export function buildSeed() {
           source: 'P007069_D459304-P_Gesamtkalkulation_VW386_0EU_HiSi.xlsm',
           periods: raw.hisiPeriods,
           positions: raw.hisi,
-          personalPositions: raw.hisiPersonal,
         },
         {
           id: uid('sub'),
@@ -43,7 +42,6 @@ export function buildSeed() {
           source: 'P007069_D460079-Q_Gesamtkalkulation_VW386_0EU_VoSi.xlsm',
           periods: raw.vosiPeriods,
           positions: raw.vosi,
-          personalPositions: raw.vosiPersonal,
         },
       ],
     },
@@ -61,7 +59,6 @@ export function buildSeed() {
           source: 'Angebot_NextGen_Seat.xlsx',
           periods: raw.plannedPeriods,
           positions: raw.planned,
-          personalPositions: raw.plannedPersonal,
         },
       ],
     },

@@ -1,10 +1,18 @@
-import { useRef, useState, useMemo } from 'react'
+import { useRef, useState, useMemo, Fragment } from 'react'
 import { actions } from '../store.js'
 import { parseWorkbookFile } from '../lib/excelParser.js'
 import { fmt } from '../lib/util.js'
 import Modal from './Modal.jsx'
 import { ColorPicker, StatusToggle } from './ProjectsPanel.jsx'
 import { IconUpload, IconTrash, IconFile, IconChart, IconPlus, IconX } from './icons.jsx'
+
+const MONTHS = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez']
+
+// A position's 12 monthly values for one year (missing -> zeros).
+const posMonths = (pos, year) => {
+  const arr = pos.months?.[year]
+  return Array.isArray(arr) ? arr : Array(12).fill(0)
+}
 
 // Upload control that adds a sub-project (parsed from Excel) to a project.
 function UploadButton({ projectId, onAdded }) {
@@ -89,6 +97,15 @@ export default function ProjectData({ projects }) {
   const [posForm, setPosForm] = useState({ workGroup: '', position: '', hours: {} })
   const [yearOpen, setYearOpen] = useState(false)
   const [yearVal, setYearVal] = useState('')
+  // years whose 12-month detail is folded away (default: all expanded)
+  const [collapsedYears, setCollapsedYears] = useState(() => new Set())
+
+  const toggleYear = (y) =>
+    setCollapsedYears((prev) => {
+      const next = new Set(prev)
+      next.has(y) ? next.delete(y) : next.add(y)
+      return next
+    })
 
   const createProject = () => {
     actions.addProject(form)
@@ -120,6 +137,11 @@ export default function ProjectData({ projects }) {
   const groups = sub ? groupPositions(sub) : []
   const periods = sub?.periods || []
   const totalHours = sub ? sub.positions.reduce((a, p) => a + (p.totalHours || 0), 0) : 0
+  // per-year layout: expanded years reveal 12 month columns + a year-sum column
+  const yearsLayout = periods.map((y) => ({ year: y, expanded: !collapsedYears.has(y) }))
+  const anyExpanded = yearsLayout.some((y) => y.expanded)
+  const toggleAllYears = () =>
+    setCollapsedYears(anyExpanded ? new Set(periods) : new Set())
 
   const createPosition = () => {
     if (!sub || !posForm.position.trim()) return
@@ -283,6 +305,11 @@ export default function ProjectData({ projects }) {
             <div className="mt-4 flex items-center justify-between">
               <h3 className="text-sm font-bold text-ink-700">Positionen & Stundenbedarf</h3>
               <div className="flex items-center gap-2">
+                {periods.length > 0 && (
+                  <button className="btn-outline text-xs" onClick={toggleAllYears}>
+                    {anyExpanded ? 'Nur Jahre' : 'Monate zeigen'}
+                  </button>
+                )}
                 <button className="btn-outline text-xs" onClick={() => setYearOpen(true)}>
                   <IconPlus width={14} height={14} /> Jahr
                 </button>
@@ -294,27 +321,69 @@ export default function ProjectData({ projects }) {
             <div className="mt-2 overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-ink-200 text-left text-xs font-semibold uppercase tracking-wide text-ink-500">
-                    <th className="px-2 py-2">Position</th>
-                    {periods.map((per) => (
-                      <th key={per} className="group px-2 py-2 text-right">
+                  {/* row 1: year groups (12 months + sum when expanded) */}
+                  <tr className="text-xs font-semibold uppercase tracking-wide text-ink-500">
+                    <th
+                      rowSpan={2}
+                      className="sticky left-0 z-20 border-b border-ink-200 bg-white px-2 py-2 text-left align-bottom"
+                    >
+                      Position
+                    </th>
+                    {yearsLayout.map(({ year, expanded }) => (
+                      <th
+                        key={year}
+                        colSpan={expanded ? 13 : 1}
+                        className="group border-b border-l border-ink-200 px-2 py-1.5 text-center"
+                      >
                         <span className="inline-flex items-center gap-1">
-                          {per}
+                          <button
+                            onClick={() => toggleYear(year)}
+                            className="rounded px-1 text-ink-400 hover:bg-ink-100 hover:text-ink-700"
+                            title={expanded ? 'Monate ausblenden' : 'Monate anzeigen'}
+                          >
+                            {expanded ? '▾' : '▸'} {year}
+                          </button>
                           <button
                             onClick={() => {
-                              if (confirm(`Jahr ${per} aus „${sub.name}" entfernen?`))
-                                actions.removeSubPeriod(project.id, sub.id, per)
+                              if (confirm(`Jahr ${year} aus „${sub.name}" entfernen?`))
+                                actions.removeSubPeriod(project.id, sub.id, year)
                             }}
                             className="rounded p-0.5 text-ink-300 opacity-0 hover:bg-red-50 hover:text-red-600 group-hover:opacity-100"
-                            title={`Jahr ${per} entfernen`}
+                            title={`Jahr ${year} entfernen`}
                           >
                             <IconX width={11} height={11} />
                           </button>
                         </span>
                       </th>
                     ))}
-                    <th className="px-2 py-2 text-right">Summe (Std)</th>
-                    <th className="w-8 px-2 py-2" />
+                    <th rowSpan={2} className="border-b border-l border-ink-200 px-2 py-2 text-right align-bottom">
+                      Summe (Std)
+                    </th>
+                    <th rowSpan={2} className="w-8 border-b border-ink-200 px-2 py-2" />
+                  </tr>
+                  {/* row 2: month labels for expanded years */}
+                  <tr className="text-[10px] font-semibold uppercase tracking-wide text-ink-400">
+                    {yearsLayout.map(({ year, expanded }) =>
+                      expanded ? (
+                        <Fragment key={year}>
+                          {MONTHS.map((mn, m) => (
+                            <th
+                              key={m}
+                              className={`border-b border-ink-200 px-1 py-1 text-right ${m === 0 ? 'border-l' : ''}`}
+                            >
+                              {mn}
+                            </th>
+                          ))}
+                          <th className="border-b border-l border-ink-100 bg-ink-50/60 px-2 py-1 text-right">
+                            Σ
+                          </th>
+                        </Fragment>
+                      ) : (
+                        <th key={year} className="border-b border-l border-ink-200 px-2 py-1 text-right">
+                          Std
+                        </th>
+                      ),
+                    )}
                   </tr>
                 </thead>
                 <tbody>
@@ -322,21 +391,45 @@ export default function ProjectData({ projects }) {
                     <FragmentGroup
                       key={g.name}
                       group={g}
-                      periods={periods}
+                      yearsLayout={yearsLayout}
                       onRemove={(idx) => actions.removeSubPosition(project.id, sub.id, idx)}
-                      onEdit={(idx, per, val) =>
+                      onEditMonth={(idx, per, m, val) =>
+                        actions.setSubPositionMonth(project.id, sub.id, idx, per, m, val)
+                      }
+                      onEditYear={(idx, per, val) =>
                         actions.setSubPositionHours(project.id, sub.id, idx, per, val)
                       }
                     />
                   ))}
                   <tr className="border-t-2 border-ink-200 bg-brand-50/50">
-                    <td className="px-2 py-2 font-bold text-ink-800">Gesamt</td>
-                    {periods.map((per) => (
-                      <td key={per} className="tnum px-2 py-2 text-right font-semibold text-ink-600">
-                        {fmt(sub.positions.reduce((a, p) => a + (p.hoursByPeriod?.[per] || 0), 0))}
-                      </td>
-                    ))}
-                    <td className="tnum px-2 py-2 text-right font-extrabold text-brand-700">
+                    <td className="sticky left-0 z-10 bg-brand-50 px-2 py-2 font-bold text-ink-800">
+                      Gesamt
+                    </td>
+                    {yearsLayout.map(({ year, expanded }) =>
+                      expanded ? (
+                        <Fragment key={year}>
+                          {MONTHS.map((_, m) => (
+                            <td
+                              key={m}
+                              className={`tnum px-1 py-2 text-right text-xs font-semibold text-ink-600 ${m === 0 ? 'border-l border-ink-200' : ''}`}
+                            >
+                              {fmt(sub.positions.reduce((a, p) => a + (posMonths(p, year)[m] || 0), 0))}
+                            </td>
+                          ))}
+                          <td className="tnum border-l border-ink-100 bg-ink-50/60 px-2 py-2 text-right font-bold text-ink-700">
+                            {fmt(sub.positions.reduce((a, p) => a + (p.hoursByPeriod?.[year] || 0), 0))}
+                          </td>
+                        </Fragment>
+                      ) : (
+                        <td
+                          key={year}
+                          className="tnum border-l border-ink-200 px-2 py-2 text-right font-semibold text-ink-600"
+                        >
+                          {fmt(sub.positions.reduce((a, p) => a + (p.hoursByPeriod?.[year] || 0), 0))}
+                        </td>
+                      ),
+                    )}
+                    <td className="tnum border-l border-ink-200 px-2 py-2 text-right font-extrabold text-brand-700">
                       {fmt(totalHours)}
                     </td>
                     <td />
@@ -501,41 +594,84 @@ export default function ProjectData({ projects }) {
   )
 }
 
-function FragmentGroup({ group, periods, onRemove, onEdit }) {
+function FragmentGroup({ group, yearsLayout, onRemove, onEditMonth, onEditYear }) {
   return (
     <>
       <tr className="bg-ink-50">
-        <td className="px-2 py-1.5 text-xs font-bold uppercase tracking-wide text-ink-500">
+        <td className="sticky left-0 z-10 bg-ink-50 px-2 py-1.5 text-xs font-bold uppercase tracking-wide text-ink-500">
           {group.name}
         </td>
-        {periods.map((per) => (
-          <td key={per} className="tnum px-2 py-1.5 text-right text-xs text-ink-400">
-            {fmt(group.items.reduce((a, p) => a + (p.hoursByPeriod?.[per] || 0), 0))}
-          </td>
-        ))}
-        <td className="tnum px-2 py-1.5 text-right text-xs font-semibold text-ink-500">
+        {yearsLayout.map(({ year, expanded }) =>
+          expanded ? (
+            <Fragment key={year}>
+              {MONTHS.map((_, m) => (
+                <td
+                  key={m}
+                  className={`tnum px-1 py-1.5 text-right text-xs text-ink-400 ${m === 0 ? 'border-l border-ink-100' : ''}`}
+                >
+                  {fmt(group.items.reduce((a, p) => a + (posMonths(p, year)[m] || 0), 0))}
+                </td>
+              ))}
+              <td className="tnum border-l border-ink-100 bg-ink-50 px-2 py-1.5 text-right text-xs font-semibold text-ink-500">
+                {fmt(group.items.reduce((a, p) => a + (p.hoursByPeriod?.[year] || 0), 0))}
+              </td>
+            </Fragment>
+          ) : (
+            <td
+              key={year}
+              className="tnum border-l border-ink-100 px-2 py-1.5 text-right text-xs text-ink-400"
+            >
+              {fmt(group.items.reduce((a, p) => a + (p.hoursByPeriod?.[year] || 0), 0))}
+            </td>
+          ),
+        )}
+        <td className="tnum border-l border-ink-100 px-2 py-1.5 text-right text-xs font-semibold text-ink-500">
           {fmt(group.total)}
         </td>
         <td className="bg-ink-50" />
       </tr>
       {group.items.map((p) => (
         <tr key={p.__idx} className="group border-t border-ink-100 hover:bg-ink-50/50">
-          <td className="px-2 py-1.5 pl-4 text-ink-800" title={p.position}>
+          <td
+            className="sticky left-0 z-10 bg-white px-2 py-1.5 pl-4 text-ink-800 group-hover:bg-ink-50"
+            title={p.position}
+          >
             <div className="max-w-[420px] truncate">{p.position}</div>
           </td>
-          {periods.map((per) => (
-            <td key={per} className="px-1 py-1 text-right">
-              <input
-                type="number"
-                min="0"
-                value={p.hoursByPeriod?.[per] ?? ''}
-                onChange={(e) => onEdit(p.__idx, per, e.target.value)}
-                className="tnum h-8 w-20 rounded-md border border-transparent bg-transparent px-1.5 text-right text-ink-700 outline-none hover:border-ink-200 focus:border-brand-500 focus:bg-white focus:ring-1 focus:ring-brand-100"
-                placeholder="0"
-              />
-            </td>
-          ))}
-          <td className="tnum px-2 py-1.5 text-right font-semibold text-ink-800">
+          {yearsLayout.map(({ year, expanded }) =>
+            expanded ? (
+              <Fragment key={year}>
+                {MONTHS.map((_, m) => (
+                  <td key={m} className={`px-0.5 py-1 text-right ${m === 0 ? 'border-l border-ink-100' : ''}`}>
+                    <input
+                      type="number"
+                      min="0"
+                      step="any"
+                      value={posMonths(p, year)[m] ? Math.round(posMonths(p, year)[m] * 10) / 10 : ''}
+                      onChange={(e) => onEditMonth(p.__idx, year, m, e.target.value)}
+                      className="tnum h-8 w-20 rounded-md border border-transparent bg-transparent px-1.5 text-right text-sm text-ink-700 outline-none hover:border-ink-200 focus:border-brand-500 focus:bg-white focus:ring-1 focus:ring-brand-100"
+                      placeholder="0"
+                    />
+                  </td>
+                ))}
+                <td className="tnum border-l border-ink-100 bg-ink-50/40 px-2 py-1.5 text-right font-semibold text-ink-700">
+                  {fmt(p.hoursByPeriod?.[year] || 0)}
+                </td>
+              </Fragment>
+            ) : (
+              <td key={year} className="border-l border-ink-100 px-1 py-1 text-right">
+                <input
+                  type="number"
+                  min="0"
+                  value={p.hoursByPeriod?.[year] ?? ''}
+                  onChange={(e) => onEditYear(p.__idx, year, e.target.value)}
+                  className="tnum h-8 w-28 rounded-md border border-transparent bg-transparent px-2 text-right text-sm text-ink-700 outline-none hover:border-ink-200 focus:border-brand-500 focus:bg-white focus:ring-1 focus:ring-brand-100"
+                  placeholder="0"
+                />
+              </td>
+            ),
+          )}
+          <td className="tnum border-l border-ink-100 px-2 py-1.5 text-right font-semibold text-ink-800">
             {fmt(p.totalHours)}
           </td>
           <td className="px-1 text-center">
