@@ -17,7 +17,7 @@ import { IconX } from './icons.jsx'
 
 const MONTHS = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez']
 
-function CustomTooltip({ active, payload, label, unit, breakdownByKey, grain }) {
+function CustomTooltip({ active, payload, label, unit, breakdownByKey, grain, format = fmt }) {
   if (!active || !payload?.length) return null
   const total = payload.find((p) => p.dataKey === '__total')?.value ?? 0
   const cap = payload.find((p) => p.dataKey === '__cap')?.value ?? 0
@@ -51,7 +51,7 @@ function CustomTooltip({ active, payload, label, unit, breakdownByKey, grain }) 
                 {g.name}
                 {g.status === 'planned' && <span className="text-ink-400"> (geplant)</span>}
               </span>
-              <span className="tnum shrink-0 font-bold text-ink-900">{fmt(g.hours)}</span>
+              <span className="tnum shrink-0 font-bold text-ink-900">{format(g.hours)}</span>
             </div>
 
             {/* sub-projects, each with its own positions */}
@@ -63,7 +63,7 @@ function CustomTooltip({ active, payload, label, unit, breakdownByKey, grain }) 
                       <span className="min-w-0 flex-1 truncate" title={s.name}>
                         {s.name}
                       </span>
-                      <span className="tnum shrink-0">{fmt(s.hours)}</span>
+                      <span className="tnum shrink-0">{format(s.hours)}</span>
                     </div>
                   )}
                   <div className="space-y-0.5">
@@ -75,14 +75,14 @@ function CustomTooltip({ active, payload, label, unit, breakdownByKey, grain }) 
                         >
                           {p.position}
                         </span>
-                        <span className="tnum shrink-0 text-ink-700">{fmt(p.hours)}</span>
+                        <span className="tnum shrink-0 text-ink-700">{format(p.hours)}</span>
                       </div>
                     ))}
                     {s.positions.length > 6 && (
                       <div className="flex items-center gap-2 text-ink-400">
                         <span className="flex-1">+ {s.positions.length - 6} weitere</span>
                         <span className="tnum shrink-0">
-                          {fmt(s.positions.slice(6).reduce((a, p) => a + p.hours, 0))}
+                          {format(s.positions.slice(6).reduce((a, p) => a + p.hours, 0))}
                         </span>
                       </div>
                     )}
@@ -97,14 +97,14 @@ function CustomTooltip({ active, payload, label, unit, breakdownByKey, grain }) 
       <div className="mt-2 flex items-center justify-between border-t border-ink-100 pt-2">
         <span className="font-semibold text-ink-700">Gesamtbedarf</span>
         <span className={`tnum font-bold ${overCap ? 'text-red-600' : 'text-ink-900'}`}>
-          {fmt(total)} {unit}
+          {format(total)} {unit}
         </span>
       </div>
       {cap > 0 && (
         <div className="mt-1 flex items-center justify-between text-accent-600">
           <span>Kapazität (Personal)</span>
           <span className="tnum">
-            {fmt(cap)} {unit}
+            {format(cap)} {unit}
             {overCap && <span className="ml-1 font-semibold text-red-600">· Überlast</span>}
           </span>
         </div>
@@ -121,7 +121,13 @@ export default function ResourceMountChart({ projects, headcount, settings }) {
   const hoursPerFTE = settings?.hoursPerFTEPerYear || 1600
 
   const { data, series } = useMemo(() => mountMonthlyData(projects), [projects])
-  const divisor = unit === 'fte' ? hoursPerFTE : 1
+  // FTE = person-equivalents. Per MONTH that is hours ÷ (annual FTE hours ÷ 12),
+  // per YEAR it is hours ÷ annual FTE hours. Using the annual figure on monthly
+  // values made a 12 h/month need read as 0.0075 FTE (≈ 0); this keeps it ≈ 0,09.
+  const fteHours = grain === 'year' ? hoursPerFTE : hoursPerFTE / 12
+  const divisor = unit === 'fte' ? fteHours : 1
+  // FTE numbers are small → show one decimal; hours stay whole.
+  const fmtV = (v) => (unit === 'fte' ? fmt(v, v !== 0 && Math.abs(v) < 10 ? 2 : 1) : fmt(v))
 
   // capacity per (year, month) in hours — the head-count grid is year-specific
   const capByYear = useMemo(() => {
@@ -381,7 +387,7 @@ export default function ResourceMountChart({ projects, headcount, settings }) {
         {hasCapacity && (
           <span className="chip ml-auto bg-accent-50 text-accent-600">
             <span className="inline-block h-0 w-4 border-t-2 border-dashed border-accent-500" />
-            Personal-Kapazität · Spitze {fmt(peakCap)} {unitLabel}/{perLabel}
+            Personal-Kapazität · Spitze {fmtV(peakCap)} {unitLabel}/{perLabel}
           </span>
         )}
       </div>
@@ -432,8 +438,8 @@ export default function ResourceMountChart({ projects, headcount, settings }) {
               tickLine={false}
               axisLine={false}
               width={54}
-              domain={[0, Math.ceil(maxTotal * 1.12) || 1]}
-              tickFormatter={(v) => fmt(v)}
+              domain={[0, maxTotal * 1.12 || 1]}
+              tickFormatter={(v) => fmtV(v)}
               label={{
                 value: unitLabel,
                 angle: -90,
@@ -444,7 +450,12 @@ export default function ResourceMountChart({ projects, headcount, settings }) {
             <Tooltip
               cursor={{ stroke: '#94a3b8', strokeWidth: 1, strokeDasharray: '4 4' }}
               content={
-                <CustomTooltip unit={unitLabel} breakdownByKey={breakdownByKey} grain={grain} />
+                <CustomTooltip
+                  unit={unitLabel}
+                  breakdownByKey={breakdownByKey}
+                  grain={grain}
+                  format={fmtV}
+                />
               }
             />
             {/* faint year separators (monthly view only) */}
@@ -535,13 +546,13 @@ export default function ResourceMountChart({ projects, headcount, settings }) {
             <div className="flex flex-wrap items-center gap-2">
               <h3 className="text-sm font-bold text-ink-900">Detail · {pinned.label}</h3>
               <span className="chip bg-white text-ink-700">
-                Gesamt {fmt(pinned.__total)} {unitLabel}
+                Gesamt {fmtV(pinned.__total)} {unitLabel}
               </span>
               {pinned.__cap > 0 && (
                 <span
                   className={`chip ${pinned.__total > pinned.__cap ? 'bg-red-50 text-red-600' : 'bg-accent-50 text-accent-600'}`}
                 >
-                  Kapazität {fmt(pinned.__cap)} {unitLabel}
+                  Kapazität {fmtV(pinned.__cap)} {unitLabel}
                   {pinned.__total > pinned.__cap && ' · Überlast'}
                 </span>
               )}
@@ -589,7 +600,7 @@ export default function ResourceMountChart({ projects, headcount, settings }) {
                         </div>
                       </div>
                       <span className="tnum shrink-0 text-sm font-extrabold text-brand-700">
-                        {fmt(s.hours)}
+                        {fmtV(s.hours)}
                       </span>
                     </div>
                     <div className="mt-2 space-y-1">
@@ -602,7 +613,7 @@ export default function ResourceMountChart({ projects, headcount, settings }) {
                             {p.position}
                           </span>
                           <span className="tnum shrink-0 font-semibold text-ink-800">
-                            {fmt(p.hours)}
+                            {fmtV(p.hours)}
                           </span>
                         </div>
                       ))}

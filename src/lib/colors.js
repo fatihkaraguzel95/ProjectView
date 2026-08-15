@@ -15,6 +15,12 @@ export const PROJECT_PALETTE = [
   '#1d4ed8', // blue-700
 ]
 
+// Larger categorical palette for per-position series (analysis mount charts).
+export const POSITION_PALETTE = [
+  '#1e40af', '#0e7490', '#15803d', '#b45309', '#7c3aed', '#be123c', '#0f766e',
+  '#c2410c', '#4d7c0f', '#6d28d9', '#a16207', '#db2777', '#0369a1', '#65a30d',
+]
+
 let cursor = 0
 export function nextColor(usedColors = []) {
   // Prefer an unused palette color; otherwise cycle.

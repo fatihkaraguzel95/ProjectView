@@ -3,14 +3,21 @@ import {
   BarChart,
   Bar,
   Cell,
+  AreaChart,
+  Area,
+  Brush,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
 } from 'recharts'
-import { projectPositionBreakdown, subPositionBreakdown } from '../lib/resource.js'
-import { shade, PROJECT_PALETTE } from '../lib/colors.js'
+import {
+  projectPositionBreakdown,
+  subPositionBreakdown,
+  monthlyPositionSeries,
+} from '../lib/resource.js'
+import { shade, PROJECT_PALETTE, POSITION_PALETTE } from '../lib/colors.js'
 import { fmt } from '../lib/util.js'
 import { IconChart } from './icons.jsx'
 
@@ -224,8 +231,136 @@ function CardHead({ project, top, count }) {
   )
 }
 
+// ---- mount-chart (stacked area over months, stacked by position) -----------
+
+function AreaTooltip({ active, payload, label }) {
+  if (!active || !payload?.length) return null
+  const rows = payload.filter((p) => p.value > 0).sort((a, b) => b.value - a.value)
+  const total = rows.reduce((a, p) => a + p.value, 0)
+  return (
+    <div className="rounded-lg border border-ink-200 bg-white p-3 text-xs shadow-pop">
+      <div className="mb-1.5 font-bold text-ink-900">{label}</div>
+      <div className="max-h-64 space-y-1 overflow-y-auto pr-1">
+        {rows.map((p) => (
+          <div key={p.dataKey} className="flex items-center gap-2">
+            <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: p.color }} />
+            <span className="min-w-0 max-w-[190px] flex-1 truncate text-ink-600" title={p.name}>
+              {p.name}
+            </span>
+            <span className="tnum shrink-0 font-semibold text-ink-900">{fmt(p.value)}</span>
+          </div>
+        ))}
+      </div>
+      <div className="mt-2 flex items-center justify-between border-t border-ink-100 pt-1.5">
+        <span className="font-semibold text-ink-700">Gesamt</span>
+        <span className="tnum font-bold text-ink-900">{fmt(total)} Std</span>
+      </div>
+    </div>
+  )
+}
+
+// Monthly stacked-area chart of the given positions (which month uses which role).
+function PositionMountChart({ positions }) {
+  const { data, series } = useMemo(() => monthlyPositionSeries(positions, POSITION_PALETTE), [positions])
+  if (!data.length || !series.length)
+    return <p className="mt-3 text-sm text-ink-400">Keine monatlichen Daten.</p>
+  const brushEnd = Math.min(23, data.length - 1)
+  return (
+    <>
+      <div className="mb-2 mt-3 flex flex-wrap gap-1.5">
+        {series.map((s) => (
+          <span key={s.key} className="chip border border-ink-200 bg-white text-ink-700">
+            <span className="inline-block h-3 w-3 shrink-0 rounded-sm" style={{ background: s.color }} />
+            <span className="max-w-[170px] truncate">{s.name}</span>
+          </span>
+        ))}
+      </div>
+      <ResponsiveContainer width="100%" height={400}>
+        <AreaChart data={data} margin={{ top: 8, right: 16, left: 4, bottom: 4 }}>
+          <defs>
+            {series.map((s, i) => (
+              <linearGradient key={i} id={`pa-${i}`} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={s.color} stopOpacity="0.85" />
+                <stop offset="100%" stopColor={s.color} stopOpacity="0.4" />
+              </linearGradient>
+            ))}
+          </defs>
+          <CartesianGrid strokeDasharray="3 3" stroke="#eef2f6" vertical={false} />
+          <XAxis
+            dataKey="label"
+            tick={{ fontSize: 10, fill: '#64748b' }}
+            tickLine={false}
+            interval="preserveStartEnd"
+            minTickGap={8}
+          />
+          <YAxis
+            tick={{ fontSize: 11, fill: '#64748b' }}
+            tickLine={false}
+            axisLine={false}
+            width={48}
+            tickFormatter={(v) => fmt(v)}
+          />
+          <Tooltip content={<AreaTooltip />} />
+          {series.map((s, i) => (
+            <Area
+              key={s.key}
+              type="monotone"
+              dataKey={s.key}
+              name={s.name}
+              stackId="p"
+              stroke={s.color}
+              strokeWidth={1}
+              fill={`url(#pa-${i})`}
+              isAnimationActive={false}
+              dot={false}
+            />
+          ))}
+          {data.length > 13 && (
+            <Brush
+              dataKey="label"
+              height={22}
+              travellerWidth={8}
+              stroke="#94a3b8"
+              fill="#f8fafc"
+              startIndex={0}
+              endIndex={brushEnd}
+              tickFormatter={(v) => String(v).slice(-2)}
+            />
+          )}
+        </AreaChart>
+      </ResponsiveContainer>
+    </>
+  )
+}
+
+function ProjectAreaCard({ project }) {
+  const rows = useMemo(() => projectPositionBreakdown(project), [project])
+  const positions = project.subProjects.flatMap((s) => s.positions)
+  return (
+    <div className="card p-5">
+      <CardHead project={project} top={rows[0]} count={rows.length} />
+      <PositionMountChart positions={positions} />
+    </div>
+  )
+}
+
+function SubAreaCard({ project, sub }) {
+  return (
+    <div className="card p-5">
+      <div className="flex items-center gap-2">
+        <span className="h-3 w-3 shrink-0 rounded-sm" style={{ background: project.color }} />
+        <span className="truncate text-xs font-semibold text-ink-400">{project.name}</span>
+        <span className="text-ink-300">·</span>
+        <h3 className="truncate text-base font-bold text-ink-900">{sub.name}</h3>
+      </div>
+      <PositionMountChart positions={sub.positions} />
+    </div>
+  )
+}
+
 export default function PositionAnalysis({ projects }) {
   const [mode, setMode] = useState('project') // 'project' | 'sub'
+  const [style, setStyle] = useState('area') // 'area' (Gebirge) | 'bars'
   const [projectId, setProjectId] = useState('all')
 
   const shown = projectId === 'all' ? projects : projects.filter((p) => p.id === projectId)
@@ -250,6 +385,22 @@ export default function PositionAnalysis({ projects }) {
             </button>
           ))}
         </div>
+        <div className="inline-flex rounded-lg border border-ink-300 p-0.5">
+          {[
+            ['area', 'Gebirge'],
+            ['bars', 'Balken'],
+          ].map(([st, label]) => (
+            <button
+              key={st}
+              onClick={() => setStyle(st)}
+              className={`rounded-md px-3 py-1.5 text-sm font-semibold transition-colors ${
+                style === st ? 'bg-brand-600 text-white' : 'text-ink-600 hover:bg-ink-100'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
         {projects.length > 1 && (
           <select
             value={projectId}
@@ -265,7 +416,9 @@ export default function PositionAnalysis({ projects }) {
           </select>
         )}
         <p className="text-sm text-ink-500">
-          Welche Position wird am meisten benötigt — gestapelt nach Teilprojekt.
+          {style === 'area'
+            ? 'Monatlicher Bedarf je Position — welcher Monat nutzt welche Position.'
+            : 'Welche Position wird am meisten benötigt — gestapelt nach Teilprojekt.'}
         </p>
       </div>
 
@@ -279,16 +432,26 @@ export default function PositionAnalysis({ projects }) {
         </div>
       ) : mode === 'project' ? (
         <div className="space-y-5">
-          {withData.map((p) => (
-            <ProjectCard key={p.id} project={p} />
-          ))}
+          {withData.map((p) =>
+            style === 'area' ? (
+              <ProjectAreaCard key={p.id} project={p} />
+            ) : (
+              <ProjectCard key={p.id} project={p} />
+            ),
+          )}
         </div>
       ) : (
         <div className="space-y-5">
           {withData.flatMap((p) =>
             p.subProjects
               .filter((s) => s.positions.length)
-              .map((s) => <SubCard key={s.id} project={p} sub={s} />),
+              .map((s) =>
+                style === 'area' ? (
+                  <SubAreaCard key={s.id} project={p} sub={s} />
+                ) : (
+                  <SubCard key={s.id} project={p} sub={s} />
+                ),
+              ),
           )}
         </div>
       )}

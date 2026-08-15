@@ -235,6 +235,56 @@ export function subPositionBreakdown(sub) {
   return [...map.values()].sort((a, b) => b.hours - a.hours)
 }
 
+const MONTHS_SHORT = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez']
+
+/**
+ * Monthly demand per POSITION for a set of positions (one project's or one
+ * sub-project's). Aggregates same-named roles, ranks by total and keeps the
+ * top `topN`, folding the rest into "Sonstige" so the stacked chart stays
+ * readable. Returns { data:[{label,year,m,[posName]:hours}], series, periods }.
+ */
+export function monthlyPositionSeries(positions, palette, { topN = 11 } = {}) {
+  const byName = new Map() // name -> { name, total, months: { year: [12] } }
+  const years = new Set()
+  for (const pos of positions) {
+    const rec = byName.get(pos.position) || { name: pos.position, total: 0, months: {} }
+    for (const [year, arr] of Object.entries(pos.months || {})) {
+      years.add(year)
+      const cur = rec.months[year] || Array(12).fill(0)
+      for (let m = 0; m < 12; m++) cur[m] += Number(arr[m]) || 0
+      rec.months[year] = cur
+      rec.total += (arr || []).reduce((a, b) => a + (Number(b) || 0), 0)
+    }
+    byName.set(pos.position, rec)
+  }
+  const periods = [...years].sort()
+  const ranked = [...byName.values()].filter((r) => r.total > 0).sort((a, b) => b.total - a.total)
+  const top = ranked.slice(0, topN)
+  const rest = ranked.slice(topN)
+
+  const series = top.map((r, i) => ({
+    key: r.name,
+    name: r.name,
+    color: palette[i % palette.length],
+  }))
+  if (rest.length) series.push({ key: '__rest__', name: `Sonstige (${rest.length})`, color: '#94a3b8' })
+
+  const data = []
+  for (const year of periods) {
+    for (let m = 0; m < 12; m++) {
+      const row = { label: `${MONTHS_SHORT[m]} ${String(year).slice(-2)}`, year, m }
+      for (const r of top) row[r.name] = Math.round(r.months[year]?.[m] || 0)
+      if (rest.length) {
+        let s = 0
+        for (const r of rest) s += r.months[year]?.[m] || 0
+        row.__rest__ = Math.round(s)
+      }
+      data.push(row)
+    }
+  }
+  return { data, series, periods }
+}
+
 export function portfolioTotals(projects) {
   const awarded = projects.filter((p) => p.status === 'awarded')
   const planned = projects.filter((p) => p.status === 'planned')
