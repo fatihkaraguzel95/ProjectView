@@ -20,6 +20,7 @@ import {
 import { shade, PROJECT_PALETTE, POSITION_PALETTE } from '../lib/colors.js'
 import { fmt } from '../lib/util.js'
 import { IconChart } from './icons.jsx'
+import YAxisZoom, { yMaxForZoom } from './YAxisZoom.jsx'
 
 const truncate = (v, n = 30) => (v && v.length > n ? v.slice(0, n - 1) + '…' : v)
 const chartHeight = (rows) => Math.max(150, rows.length * 26 + 56)
@@ -262,9 +263,24 @@ function AreaTooltip({ active, payload, label }) {
 // Monthly stacked-area chart of the given positions (which month uses which role).
 function PositionMountChart({ positions }) {
   const { data, series } = useMemo(() => monthlyPositionSeries(positions, POSITION_PALETTE), [positions])
+  const [yZoom, setYZoom] = useState(1) // vertical-axis zoom: 1 = full range
+  const [brushRange, setBrushRange] = useState(null) // controlled horizontal window
+  // peak stacked total across months → base for the value-axis domain
+  const peak = useMemo(
+    () => Math.max(1, ...data.map((row) => series.reduce((a, s) => a + (row[s.key] || 0), 0))),
+    [data, series],
+  )
   if (!data.length || !series.length)
     return <p className="mt-3 text-sm text-ink-400">Keine monatlichen Daten.</p>
   const brushEnd = Math.min(23, data.length - 1)
+  const yMax = yMaxForZoom(peak * 1.05, yZoom)
+  // Controlled horizontal window so the vertical-zoom re-render doesn't snap the
+  // Brush back to its default position — it stays where the user left it.
+  const brushIdx = brushRange || { startIndex: 0, endIndex: brushEnd }
+  const onBrushChange = (r) => {
+    if (r && r.startIndex != null && r.endIndex != null)
+      setBrushRange({ startIndex: r.startIndex, endIndex: r.endIndex })
+  }
   return (
     <>
       <div className="mb-2 mt-3 flex flex-wrap gap-1.5">
@@ -275,6 +291,9 @@ function PositionMountChart({ positions }) {
           </span>
         ))}
       </div>
+      <div className="flex items-stretch">
+        <YAxisZoom zoom={yZoom} setZoom={setYZoom} height={400} />
+        <div className="min-w-0 flex-1">
       <ResponsiveContainer width="100%" height={400}>
         <AreaChart data={data} margin={{ top: 8, right: 16, left: 4, bottom: 4 }}>
           <defs>
@@ -298,6 +317,8 @@ function PositionMountChart({ positions }) {
             tickLine={false}
             axisLine={false}
             width={48}
+            domain={[0, yMax]}
+            allowDataOverflow
             tickFormatter={(v) => fmt(v)}
           />
           <Tooltip content={<AreaTooltip />} />
@@ -322,13 +343,16 @@ function PositionMountChart({ positions }) {
               travellerWidth={8}
               stroke="#94a3b8"
               fill="#f8fafc"
-              startIndex={0}
-              endIndex={brushEnd}
+              startIndex={brushIdx.startIndex}
+              endIndex={brushIdx.endIndex}
+              onChange={onBrushChange}
               tickFormatter={(v) => String(v).slice(-2)}
             />
           )}
         </AreaChart>
       </ResponsiveContainer>
+        </div>
+      </div>
     </>
   )
 }

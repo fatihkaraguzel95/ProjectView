@@ -59,3 +59,18 @@ body {
     @apply inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold;
   }
 }
+
+/* Vertical range slider used to scale a chart's value (Y) axis.
+   writing-mode + direction:rtl orients it upright with the max at the top;
+   accent-color paints it in the brand blue. Legacy webkit fallback kept for
+   older Chromium builds. */
+.vzoom {
+  writing-mode: vertical-lr;
+  direction: rtl;
+  -webkit-appearance: slider-vertical;
+  width: 8px;
+  padding: 0;
+  accent-color: #2563eb;
+  background: transparent;
+  cursor: pointer;
+}

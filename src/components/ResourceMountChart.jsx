@@ -14,6 +14,7 @@ import {
 import { mountMonthlyData, monthlyCapacityHoursForYear } from '../lib/resource.js'
 import { fmt } from '../lib/util.js'
 import { IconX } from './icons.jsx'
+import YAxisZoom, { yMaxForZoom } from './YAxisZoom.jsx'
 
 const MONTHS = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez']
 
@@ -117,6 +118,8 @@ export default function ResourceMountChart({ projects, headcount, settings }) {
   const [hidden, setHidden] = useState(() => new Set())
   const [unit, setUnit] = useState('h') // 'h' | 'fte'
   const [grain, setGrain] = useState('month') // 'month' | 'year' — time scale
+  const [yZoom, setYZoom] = useState(1) // vertical-axis zoom: 1 = full range
+  const [brushRange, setBrushRange] = useState(null) // controlled horizontal window
   const [pinned, setPinned] = useState(null) // clicked period row, kept on screen
   const hoursPerFTE = settings?.hoursPerFTEPerYear || 1600
 
@@ -277,12 +280,22 @@ export default function ResourceMountChart({ projects, headcount, settings }) {
   const perLabel = grain === 'year' ? 'Jahr' : 'Monat'
   const hasData = series.length > 0 && data.some((r) => visibleSeries.some((s) => r[s.id] > 0))
   const maxTotal = Math.max(0, ...chartData.map((r) => Math.max(r.__total, r.__cap)))
+  const yMax = yMaxForZoom(maxTotal * 1.12 || 1, yZoom)
   const yearStarts = chartData.filter((r) => r.isYearStart)
   const peakCap = Math.max(0, ...chartData.map((r) => r.__cap))
   // default zoom window: monthly view starts with ~2 years, then pan right
   const brushStart = 0
   const brushEnd =
     grain === 'month' ? Math.min(23, Math.max(0, chartData.length - 1)) : chartData.length - 1
+  // Controlled horizontal window. Kept in state so re-renders (e.g. changing the
+  // vertical-axis zoom, which bumps Recharts' internal updateId) don't snap the
+  // Brush back to its defaults — it stays where the user left it. Falls back to
+  // the defaults until the user drags, and resets when the time grain changes.
+  const brushIdx = brushRange || { startIndex: brushStart, endIndex: brushEnd }
+  const onBrushChange = (r) => {
+    if (r && r.startIndex != null && r.endIndex != null)
+      setBrushRange({ startIndex: r.startIndex, endIndex: r.endIndex })
+  }
 
   // pinned (clicked) period → full breakdown for the fixed detail panel
   const pinnedKey = pinned ? (grain === 'year' ? String(pinned.year) : `${pinned.year}-${pinned.m}`) : null
@@ -314,6 +327,7 @@ export default function ResourceMountChart({ projects, headcount, settings }) {
                 onClick={() => {
                   setGrain(g)
                   setPinned(null)
+                  setBrushRange(null)
                 }}
                 className={`rounded-md px-2.5 py-1 text-xs font-semibold transition-colors ${
                   grain === g ? 'bg-brand-600 text-white' : 'text-ink-600 hover:bg-ink-100'
@@ -395,6 +409,9 @@ export default function ResourceMountChart({ projects, headcount, settings }) {
       {!hasData ? (
         <EmptyChart />
       ) : (
+        <div className="flex items-stretch">
+          <YAxisZoom zoom={yZoom} setZoom={setYZoom} height={540} />
+          <div className="min-w-0 flex-1">
         <ResponsiveContainer width="100%" height={540}>
           <ComposedChart
             data={chartData}
@@ -438,7 +455,8 @@ export default function ResourceMountChart({ projects, headcount, settings }) {
               tickLine={false}
               axisLine={false}
               width={54}
-              domain={[0, maxTotal * 1.12 || 1]}
+              domain={[0, yMax]}
+              allowDataOverflow
               tickFormatter={(v) => fmtV(v)}
               label={{
                 value: unitLabel,
@@ -525,12 +543,15 @@ export default function ResourceMountChart({ projects, headcount, settings }) {
               travellerWidth={9}
               stroke="#94a3b8"
               fill="#f8fafc"
-              startIndex={brushStart}
-              endIndex={brushEnd}
+              startIndex={brushIdx.startIndex}
+              endIndex={brushIdx.endIndex}
+              onChange={onBrushChange}
               tickFormatter={(v) => (grain === 'year' ? v : String(v).slice(-2))}
             />
           </ComposedChart>
         </ResponsiveContainer>
+          </div>
+        </div>
       )}
 
       {/* hint + pinned full-detail panel (click a point to freeze it) */}
