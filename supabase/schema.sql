@@ -86,7 +86,10 @@ create table if not exists public.settings (
 );
 
 -- ---------------------------------------------------------------------------
--- Row Level Security — open to the anon/publishable key (shared workspace)
+-- Row Level Security — restricted to logged-in (authenticated) users.
+-- The anon/publishable key can no longer read or write; a Supabase Auth login
+-- is required. See supabase/auth-setup.sql to (re)apply this on an existing DB
+-- and to create the admin user.
 -- ---------------------------------------------------------------------------
 
 do $$
@@ -98,8 +101,9 @@ begin
   ] loop
     execute format('alter table public.%I enable row level security;', t);
     execute format('drop policy if exists "anon_all" on public.%I;', t);
+    execute format('drop policy if exists "authenticated_all" on public.%I;', t);
     execute format(
-      'create policy "anon_all" on public.%I for all to anon, authenticated using (true) with check (true);',
+      'create policy "authenticated_all" on public.%I for all to authenticated using (true) with check (true);',
       t
     );
   end loop;

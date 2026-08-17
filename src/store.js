@@ -139,7 +139,17 @@ async function init() {
     notify()
   }
 }
-init()
+
+// In remote mode the data load waits until the user has authenticated — the
+// AuthGate calls initStore() after a successful login. In local mode there is
+// no login, so we boot immediately.
+let started = false
+export async function initStore() {
+  if (started) return
+  started = true
+  await init()
+}
+if (!remote) initStore()
 
 // ---- actions ---------------------------------------------------------------
 

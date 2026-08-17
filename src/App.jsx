@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useStore, actions } from './store.js'
+import { supabase, isSupabaseConfigured } from './lib/supabase.js'
 import {
   portfolioTotals,
   capacityYears,
@@ -151,6 +152,17 @@ export default function App() {
           >
             Zurücksetzen
           </button>
+          {isSupabaseConfigured && (
+            <button
+              className="btn-ghost text-xs"
+              onClick={async () => {
+                await supabase.auth.signOut()
+                window.location.reload()
+              }}
+            >
+              Abmelden
+            </button>
+          )}
         </div>
       </header>
 

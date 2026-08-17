@@ -9,7 +9,14 @@ export const isSupabaseConfigured = Boolean(url && key)
 
 export const supabase = isSupabaseConfigured
   ? createClient(url, key, {
-      auth: { persistSession: false },
+      // Keep the login session in localStorage so a reload stays logged in and
+      // the access token is auto-refreshed in the background.
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: false,
+        storageKey: 'projectview.auth',
+      },
       realtime: { params: { eventsPerSecond: 5 } },
     })
   : null
