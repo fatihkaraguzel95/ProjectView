@@ -218,17 +218,36 @@ export default function ProjectData({ projects }) {
                   const active = sub?.id === s.id
                   const h = s.positions.reduce((a, x) => a + (x.totalHours || 0), 0)
                   return (
-                    <button
+                    <div
                       key={s.id}
-                      onClick={() => setSelected({ projectId: p.id, subId: s.id })}
-                      className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition-colors ${
-                        active ? 'bg-brand-50 text-brand-700' : 'text-ink-700 hover:bg-ink-50'
+                      className={`group flex items-center gap-1 rounded-lg pr-1 transition-colors ${
+                        active ? 'bg-brand-50' : 'hover:bg-ink-50'
                       }`}
                     >
-                      <IconFile width={15} height={15} className="shrink-0 text-ink-400" />
-                      <span className="flex-1 truncate">{s.name}</span>
-                      <span className="tnum shrink-0 text-xs text-ink-400">{fmt(h)}</span>
-                    </button>
+                      <button
+                        onClick={() => setSelected({ projectId: p.id, subId: s.id })}
+                        className={`flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left text-sm ${
+                          active ? 'text-brand-700' : 'text-ink-700'
+                        }`}
+                      >
+                        <IconFile width={15} height={15} className="shrink-0 text-ink-400" />
+                        <span className="flex-1 truncate">{s.name}</span>
+                        <span className="tnum shrink-0 text-xs text-ink-400">{fmt(h)}</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (confirm(`Excel-Daten „${s.name}" löschen?`)) {
+                            actions.removeSubProject(p.id, s.id)
+                            if (sub?.id === s.id) setSelected(null)
+                          }
+                        }}
+                        className="shrink-0 rounded-md p-1 text-ink-300 hover:bg-red-50 hover:text-red-600"
+                        title="Excel-Daten löschen"
+                        aria-label="Excel-Daten löschen"
+                      >
+                        <IconTrash width={13} height={13} />
+                      </button>
+                    </div>
                   )
                 })}
                 {p.subProjects.length === 0 && (

@@ -16,8 +16,8 @@ export function StatusToggle({ status, onChange }) {
   return (
     <div className="inline-flex rounded-lg border border-ink-300 p-0.5 text-xs">
       {[
-        ['awarded', 'Alınmış'],
-        ['planned', 'Planlanan'],
+        ['awarded', 'Beauftragt'],
+        ['planned', 'Geplant'],
       ].map(([val, label]) => (
         <button
           key={val}
@@ -252,7 +252,7 @@ export default function ProjectsPanel({ projects }) {
             <label className="mb-1.5 block text-xs font-semibold text-ink-600">Status</label>
             <StatusToggle status={form.status} onChange={(s) => setForm({ ...form, status: s })} />
             <p className="mt-1.5 text-xs text-ink-400">
-              „Alınmış" = beauftragt · „Planlanan" = geplant (im Chart schraffiert)
+              „Beauftragt" = fest zugesagt · „Geplant" = noch offen (im Chart schraffiert)
             </p>
           </div>
         </div>

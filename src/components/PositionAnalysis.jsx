@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   BarChart,
   Bar,
@@ -76,6 +76,13 @@ function SimpleTooltip({ active, payload, label }) {
 function ProjectCard({ project }) {
   const rows = useMemo(() => projectPositionBreakdown(project), [project])
   const subNames = project.subProjects.map((s) => s.name)
+  const [hidden, setHidden] = useState(() => new Set()) // sub-projects hidden via legend
+  const toggle = (name) =>
+    setHidden((prev) => {
+      const next = new Set(prev)
+      next.has(name) ? next.delete(name) : next.add(name)
+      return next
+    })
   const data = rows.map((r) => ({ position: r.position, total: r.total, ...r.bySub }))
   const top = rows[0]
 
@@ -92,15 +99,24 @@ function ProjectCard({ project }) {
       <CardHead project={project} top={top} count={rows.length} />
       {subNames.length > 1 && (
         <div className="mb-2 mt-3 flex flex-wrap gap-2">
-          {subNames.map((name, i) => (
-            <span key={name} className="chip border border-ink-200 bg-white text-ink-700">
-              <span
-                className="inline-block h-3 w-3 rounded-sm"
-                style={{ background: shade(project.color, i * 0.24) }}
-              />
-              {name}
-            </span>
-          ))}
+          {subNames.map((name, i) => {
+            const off = hidden.has(name)
+            return (
+              <button
+                key={name}
+                onClick={() => toggle(name)}
+                className={`chip border border-ink-200 bg-white text-ink-700 transition-opacity ${off ? 'opacity-40' : ''}`}
+                aria-pressed={!off}
+                title={off ? 'Einblenden' : 'Ausblenden'}
+              >
+                <span
+                  className="inline-block h-3 w-3 rounded-sm"
+                  style={{ background: shade(project.color, i * 0.24) }}
+                />
+                {name}
+              </button>
+            )
+          })}
         </div>
       )}
       <ResponsiveContainer width="100%" height={chartHeight(rows)}>
@@ -121,6 +137,7 @@ function ProjectCard({ project }) {
               key={name}
               dataKey={name}
               stackId="a"
+              hide={hidden.has(name)}
               fill={shade(project.color, i * 0.24)}
               radius={i === subNames.length - 1 ? [0, 3, 3, 0] : 0}
               isAnimationActive={false}
@@ -261,14 +278,30 @@ function AreaTooltip({ active, payload, label }) {
 }
 
 // Monthly stacked-area chart of the given positions (which month uses which role).
-function PositionMountChart({ positions }) {
-  const { data, series } = useMemo(() => monthlyPositionSeries(positions, POSITION_PALETTE), [positions])
+function PositionMountChart({ positions, topN }) {
+  const { data, series } = useMemo(
+    () => monthlyPositionSeries(positions, POSITION_PALETTE, topN ? { topN } : undefined),
+    [positions, topN],
+  )
   const [yZoom, setYZoom] = useState(1) // vertical-axis zoom: 1 = full range
   const [brushRange, setBrushRange] = useState(null) // controlled horizontal window
-  // peak stacked total across months → base for the value-axis domain
+  const [hidden, setHidden] = useState(() => new Set()) // series hidden via legend
+  const toggle = (key) =>
+    setHidden((prev) => {
+      const next = new Set(prev)
+      next.has(key) ? next.delete(key) : next.add(key)
+      return next
+    })
+  // peak stacked total across VISIBLE series → base for the value-axis domain
   const peak = useMemo(
-    () => Math.max(1, ...data.map((row) => series.reduce((a, s) => a + (row[s.key] || 0), 0))),
-    [data, series],
+    () =>
+      Math.max(
+        1,
+        ...data.map((row) =>
+          series.reduce((a, s) => a + (hidden.has(s.key) ? 0 : row[s.key] || 0), 0),
+        ),
+      ),
+    [data, series, hidden],
   )
   if (!data.length || !series.length)
     return <p className="mt-3 text-sm text-ink-400">Keine monatlichen Daten.</p>
@@ -283,13 +316,38 @@ function PositionMountChart({ positions }) {
   }
   return (
     <>
-      <div className="mb-2 mt-3 flex flex-wrap gap-1.5">
-        {series.map((s) => (
-          <span key={s.key} className="chip border border-ink-200 bg-white text-ink-700">
-            <span className="inline-block h-3 w-3 shrink-0 rounded-sm" style={{ background: s.color }} />
-            <span className="max-w-[170px] truncate">{s.name}</span>
-          </span>
-        ))}
+      <div className="mb-2 mt-3 flex flex-wrap items-center gap-1.5">
+        {series.length > 1 && (
+          <div className="inline-flex rounded-lg border border-ink-200 p-0.5">
+            <button
+              onClick={() => setHidden(new Set())}
+              className="rounded-md px-2 py-1 text-xs font-semibold text-ink-600 hover:bg-ink-100"
+            >
+              Alle
+            </button>
+            <button
+              onClick={() => setHidden(new Set(series.map((s) => s.key)))}
+              className="rounded-md px-2 py-1 text-xs font-semibold text-ink-600 hover:bg-ink-100"
+            >
+              Keine
+            </button>
+          </div>
+        )}
+        {series.map((s) => {
+          const off = hidden.has(s.key)
+          return (
+            <button
+              key={s.key}
+              onClick={() => toggle(s.key)}
+              className={`chip border border-ink-200 bg-white text-ink-700 transition-opacity ${off ? 'opacity-40' : ''}`}
+              aria-pressed={!off}
+              title={off ? 'Einblenden' : 'Ausblenden'}
+            >
+              <span className="inline-block h-3 w-3 shrink-0 rounded-sm" style={{ background: s.color }} />
+              <span className="max-w-[170px] truncate">{s.name}</span>
+            </button>
+          )
+        })}
       </div>
       <div className="flex items-stretch">
         <YAxisZoom zoom={yZoom} setZoom={setYZoom} height={400} />
@@ -329,6 +387,7 @@ function PositionMountChart({ positions }) {
               dataKey={s.key}
               name={s.name}
               stackId="p"
+              hide={hidden.has(s.key)}
               stroke={s.color}
               strokeWidth={1}
               fill={`url(#pa-${i})`}
@@ -382,8 +441,180 @@ function SubAreaCard({ project, sub }) {
   )
 }
 
+// ---- "Nach Position": pick one or more positions, compare their total demand
+//      summed across ALL shown projects. Add/remove single or multiple roles.
+
+const positionTotal = (pos) =>
+  pos.totalHours ||
+  Object.values(pos.hoursByPeriod || {}).reduce((a, b) => a + (Number(b) || 0), 0) ||
+  Object.values(pos.months || {}).reduce(
+    (a, arr) => a + (arr || []).reduce((x, y) => x + (Number(y) || 0), 0),
+    0,
+  )
+
+// Horizontal total-hours bars, one per selected position (across all projects).
+function PositionTotalsBars({ rows }) {
+  return (
+    <ResponsiveContainer width="100%" height={chartHeight(rows)}>
+      <BarChart data={rows} layout="vertical" margin={{ top: 4, right: 24, left: 8, bottom: 4 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#eef2f6" horizontal={false} />
+        <XAxis type="number" tick={{ fontSize: 11, fill: '#64748b' }} tickFormatter={(v) => fmt(v)} />
+        <YAxis
+          type="category"
+          dataKey="position"
+          width={210}
+          tick={{ fontSize: 11, fill: '#334155' }}
+          tickFormatter={(v) => truncate(v, 32)}
+          tickLine={false}
+        />
+        <Tooltip cursor={{ fill: '#f1f5f9' }} content={<SimpleTooltip />} />
+        <Bar dataKey="hours" radius={[0, 3, 3, 0]} isAnimationActive={false}>
+          {rows.map((r) => (
+            <Cell key={r.position} fill={r.color} />
+          ))}
+        </Bar>
+      </BarChart>
+    </ResponsiveContainer>
+  )
+}
+
+function PositionCompareView({ projects, style }) {
+  const allPos = useMemo(
+    () => projects.flatMap((p) => p.subProjects.flatMap((s) => s.positions)),
+    [projects],
+  )
+  // Catalog of unique position names with total hours across all projects.
+  const catalog = useMemo(() => {
+    const map = new Map()
+    for (const pos of allPos) {
+      const cur = map.get(pos.position) || {
+        position: pos.position,
+        workGroup: pos.workGroup,
+        total: 0,
+      }
+      cur.total += positionTotal(pos)
+      map.set(pos.position, cur)
+    }
+    return [...map.values()].filter((r) => r.total > 0).sort((a, b) => b.total - a.total)
+  }, [allPos])
+
+  const [selected, setSelected] = useState(() => catalog.slice(0, 1).map((c) => c.position))
+
+  // Prune selections that disappear when the project filter changes; seed the
+  // first position on the very first load so the chart is never empty.
+  const [touched, setTouched] = useState(false)
+  useEffect(() => {
+    const names = new Set(catalog.map((c) => c.position))
+    setSelected((sel) => {
+      const pruned = sel.filter((n) => names.has(n))
+      if (pruned.length === 0 && !touched && catalog.length) return [catalog[0].position]
+      return pruned
+    })
+  }, [catalog, touched])
+
+  const add = (name) => {
+    if (!name) return
+    setTouched(true)
+    setSelected((sel) => (sel.includes(name) ? sel : [...sel, name]))
+  }
+  const remove = (name) => {
+    setTouched(true)
+    setSelected((sel) => sel.filter((n) => n !== name))
+  }
+
+  // Colour by total-desc rank so chips / bars / area all agree.
+  const orderedSel = useMemo(
+    () =>
+      selected
+        .map((name) => catalog.find((c) => c.position === name))
+        .filter(Boolean)
+        .sort((a, b) => b.total - a.total),
+    [selected, catalog],
+  )
+  const colorFor = (i) => POSITION_PALETTE[i % POSITION_PALETTE.length]
+  const selectedPositions = useMemo(
+    () => allPos.filter((p) => selected.includes(p.position)),
+    [allPos, selected],
+  )
+  const barRows = orderedSel.map((c, i) => ({
+    position: c.position,
+    workGroup: c.workGroup,
+    hours: c.total,
+    color: colorFor(i),
+  }))
+  const remaining = catalog.filter((c) => !selected.includes(c.position))
+
+  return (
+    <div className="card p-5">
+      <div className="flex flex-wrap items-center gap-2">
+        <h3 className="text-base font-bold text-ink-900">Positionsvergleich</h3>
+        <span className="text-sm text-ink-400">— Gesamtbedarf über alle Projekte</span>
+      </div>
+
+      {/* selected positions as removable chips */}
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        {orderedSel.map((c, i) => (
+          <span
+            key={c.position}
+            className="chip border border-ink-200 bg-white text-ink-700"
+            title={c.position}
+          >
+            <span className="inline-block h-3 w-3 shrink-0 rounded-sm" style={{ background: colorFor(i) }} />
+            <span className="max-w-[190px] truncate">{c.position}</span>
+            <span className="tnum text-ink-400">{fmt(c.total)}</span>
+            <button
+              onClick={() => remove(c.position)}
+              className="ml-0.5 rounded px-1 text-ink-400 hover:bg-ink-100 hover:text-ink-700"
+              aria-label="Position entfernen"
+            >
+              ×
+            </button>
+          </span>
+        ))}
+        {remaining.length > 0 && (
+          <select
+            value=""
+            onChange={(e) => add(e.target.value)}
+            className="rounded-lg border border-dashed border-ink-300 bg-white px-2.5 py-1 text-sm text-ink-600 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
+          >
+            <option value="">＋ Position hinzufügen…</option>
+            {remaining.map((c) => (
+              <option key={c.position} value={c.position}>
+                {c.position} ({fmt(c.total)} Std)
+              </option>
+            ))}
+          </select>
+        )}
+        {selected.length > 1 && (
+          <button
+            onClick={() => {
+              setTouched(true)
+              setSelected([])
+            }}
+            className="btn-ghost text-xs"
+          >
+            Alle entfernen
+          </button>
+        )}
+      </div>
+
+      {orderedSel.length === 0 ? (
+        <p className="mt-4 text-sm text-ink-400">
+          Wählen Sie oben mindestens eine Position, um den Verlauf zu sehen.
+        </p>
+      ) : style === 'area' ? (
+        <PositionMountChart positions={selectedPositions} topN={Math.max(1, selected.length)} />
+      ) : (
+        <div className="mt-4">
+          <PositionTotalsBars rows={barRows} />
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function PositionAnalysis({ projects }) {
-  const [mode, setMode] = useState('project') // 'project' | 'sub'
+  const [mode, setMode] = useState('project') // 'project' | 'sub' | 'position'
   const [style, setStyle] = useState('area') // 'area' (Gebirge) | 'bars'
   const [projectId, setProjectId] = useState('all')
 
@@ -397,6 +628,7 @@ export default function PositionAnalysis({ projects }) {
           {[
             ['project', 'Nach Projekt'],
             ['sub', 'Nach Teilprojekt'],
+            ['position', 'Nach Position'],
           ].map(([m, label]) => (
             <button
               key={m}
@@ -440,9 +672,13 @@ export default function PositionAnalysis({ projects }) {
           </select>
         )}
         <p className="text-sm text-ink-500">
-          {style === 'area'
-            ? 'Monatlicher Bedarf je Position — welcher Monat nutzt welche Position.'
-            : 'Welche Position wird am meisten benötigt — gestapelt nach Teilprojekt.'}
+          {mode === 'position'
+            ? style === 'area'
+              ? 'Ausgewählte Positionen — monatlicher Gesamtbedarf über alle Projekte.'
+              : 'Ausgewählte Positionen — Gesamtstunden über alle Projekte.'
+            : style === 'area'
+              ? 'Monatlicher Bedarf je Position — welcher Monat nutzt welche Position.'
+              : 'Welche Position wird am meisten benötigt — gestapelt nach Teilprojekt.'}
         </p>
       </div>
 
@@ -454,6 +690,8 @@ export default function PositionAnalysis({ projects }) {
             Laden Sie unter „Projektdaten“ Excel-Vorlagen hoch, um die Positionsauslastung zu sehen.
           </p>
         </div>
+      ) : mode === 'position' ? (
+        <PositionCompareView projects={withData} style={style} />
       ) : mode === 'project' ? (
         <div className="space-y-5">
           {withData.map((p) =>

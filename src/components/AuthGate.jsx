@@ -19,9 +19,29 @@ export default function AuthGate({ children }) {
     return () => sub.subscription.unsubscribe()
   }, [])
 
-  // Kick off the (remote) data load once we actually have a session.
+  // Once we have a session, validate it against the CURRENT project before
+  // loading data. A persisted token from a *different* Supabase project (e.g.
+  // after switching VITE_SUPABASE_URL) is rejected server-side — without this
+  // check the app would silently drop into local ("offline") mode. If invalid,
+  // sign out and fall back to the login screen.
   useEffect(() => {
-    if (session) initStore().then(() => setReady(true))
+    if (!session) return
+    let cancelled = false
+    ;(async () => {
+      const { error } = await supabase.auth.getUser()
+      if (cancelled) return
+      if (error) {
+        await supabase.auth.signOut()
+        setSession(null)
+        setReady(false)
+        return
+      }
+      await initStore()
+      if (!cancelled) setReady(true)
+    })()
+    return () => {
+      cancelled = true
+    }
   }, [session])
 
   // No Supabase configured → local-only prototype, skip auth entirely.
